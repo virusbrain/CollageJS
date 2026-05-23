@@ -1,5 +1,6 @@
 import { LAYOUTS, layoutsForCount } from './layouts.js';
 import { buildCollageCanvas, upscaleForExport } from './collage.js';
+import { enableImageReorder } from './reorder.js';
 
 /** @type {{ id: string, url: string, image: HTMLImageElement }[]} */
 let images = [];
@@ -88,20 +89,44 @@ function renderLayoutButtons() {
   });
 }
 
+/**
+ * @param {number} fromIndex
+ * @param {number} toIndex
+ */
+function reorderImages(fromIndex, toIndex) {
+  if (fromIndex === toIndex) return;
+  if (fromIndex < 0 || toIndex < 0) return;
+  if (fromIndex >= images.length || toIndex >= images.length) return;
+
+  const [moved] = images.splice(fromIndex, 1);
+  images.splice(toIndex, 0, moved);
+  renderThumbnails();
+  refreshPreview();
+}
+
 function renderThumbnails() {
   imageList.innerHTML = '';
   images.forEach((item, index) => {
     const li = document.createElement('div');
     li.className = 'thumb';
     li.setAttribute('role', 'listitem');
+    li.dataset.index = String(index);
+    li.draggable = true;
 
     const img = document.createElement('img');
     img.src = item.url;
     img.alt = `Bild ${index + 1}`;
+    img.draggable = false;
 
     const order = document.createElement('span');
     order.className = 'order';
     order.textContent = String(index + 1);
+
+    const dragHandle = document.createElement('button');
+    dragHandle.type = 'button';
+    dragHandle.className = 'drag-handle';
+    dragHandle.setAttribute('aria-label', `Bild ${index + 1} verschieben`);
+    dragHandle.textContent = '⠿';
 
     const remove = document.createElement('button');
     remove.type = 'button';
@@ -116,6 +141,7 @@ function renderThumbnails() {
 
     li.appendChild(img);
     li.appendChild(order);
+    li.appendChild(dragHandle);
     li.appendChild(remove);
     imageList.appendChild(li);
   });
@@ -332,6 +358,8 @@ dismissInstall?.addEventListener('click', () => {
   installBanner.hidden = true;
   localStorage.setItem('install-dismissed', '1');
 });
+
+enableImageReorder(imageList, { onReorder: reorderImages });
 
 registerServiceWorker();
 renderLayoutButtons();
