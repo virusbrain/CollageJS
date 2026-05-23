@@ -280,6 +280,11 @@ body {
   box-shadow: 0 0 0 2px rgba(0, 184, 148, 0.5);
 }
 
+.preview-cell--swap-pick .preview-cell-handle {
+  background: var(--accent);
+  transform: scale(1.1);
+}
+
 .preview-cell--dragging .preview-cell-handle {
   transform: scale(1.12);
   background: var(--accent);

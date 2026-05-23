@@ -1,20 +1,12 @@
 /**
- * Interaktive Vorschau: Reihenfolge per Ziehen der Nummer, Bild per Wischen positionieren, Zoomen per Pinch.
- * @param {HTMLElement} stage
- * @param {HTMLCanvasElement} canvas
- * @param {HTMLElement} overlay
- * @param {{
- *   getGeometry: () => { width: number, height: number, cells: { slotIndex: number, imageIndex: number, x: number, y: number, w: number, h: number }[] } | null,
- *   getTransform: (imageIndex: number) => { panX: number, panY: number, zoom: number },
- *   onSwapSlots: (fromSlot: number, toSlot: number) => void,
- *   onTransform: (imageIndex: number, transform: { panX: number, panY: number, zoom: number }) => void,
- *   onInteractionEnd: () => void,
- * }} callbacks
+ * Interaktive Vorschau: Reihenfolge tauschen (Ziehen oder Tippen), Bild positionieren & zoomen.
  */
 export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   let selectedSlot = 0;
+  /** @type {number | null} Erste getippte Position zum Tauschen */
+  let swapPickSlot = null;
 
-  /** @type {{ mode: 'swap', slot: number, pointerId: number } | { mode: 'pan', slot: number, imageIndex: number, pointerId: number, startX: number, startY: number, startPanX: number, startPanY: number } | null} */
+  /** @type {{ mode: 'swap', slot: number, pointerId: number, targetSlot: number, moved: boolean } | { mode: 'pan', slot: number, imageIndex: number, pointerId: number, startX: number, startY: number, startPanX: number, startPanY: number } | null} */
   let drag = null;
 
   /** @type {Map<number, { x: number, y: number }>} */
@@ -22,8 +14,80 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   /** @type {{ imageIndex: number, startDist: number, startZoom: number } | null} */
   let pinch = null;
 
+  /** @type {((e: PointerEvent) => void) | null} */
+  let docMoveHandler = null;
+  /** @type {((e: PointerEvent) => void) | null} */
+  let docEndHandler = null;
+
   function pct(value, total) {
     return `${(value / total) * 100}%`;
+  }
+
+  function slotFromPoint(clientX, clientY) {
+    const elements = document.elementsFromPoint(clientX, clientY);
+    for (const el of elements) {
+      const cell = el.closest?.('.preview-cell');
+      if (cell && overlay.contains(cell)) {
+        return Number(/** @type {HTMLElement} */ (cell).dataset.slot);
+      }
+    }
+    return -1;
+  }
+
+  function clearSwapHighlight() {
+    overlay.querySelectorAll('.preview-cell--swap-target').forEach((n) => {
+      n.classList.remove('preview-cell--swap-target');
+    });
+    overlay.querySelectorAll('.preview-cell--swap-pick').forEach((n) => {
+      n.classList.remove('preview-cell--swap-pick');
+    });
+  }
+
+  function setSwapPick(slot) {
+    swapPickSlot = slot;
+    clearSwapHighlight();
+    if (slot !== null) {
+      overlay.querySelector(`[data-slot="${slot}"]`)?.classList.add('preview-cell--swap-pick');
+    }
+  }
+
+  function highlightSwapTarget(targetSlot, fromSlot) {
+    overlay.querySelectorAll('.preview-cell--swap-target').forEach((n) => {
+      n.classList.remove('preview-cell--swap-target');
+    });
+    if (targetSlot >= 0 && targetSlot !== fromSlot) {
+      overlay.querySelector(`[data-slot="${targetSlot}"]`)?.classList.add('preview-cell--swap-target');
+    }
+  }
+
+  function removeDocListeners() {
+    if (docMoveHandler) {
+      document.removeEventListener('pointermove', docMoveHandler);
+      docMoveHandler = null;
+    }
+    if (docEndHandler) {
+      document.removeEventListener('pointerup', docEndHandler);
+      document.removeEventListener('pointercancel', docEndHandler);
+      docEndHandler = null;
+    }
+  }
+
+  function finishSwapDrag() {
+    if (!drag || drag.mode !== 'swap') return;
+
+    const { slot, targetSlot } = drag;
+    overlay.querySelectorAll('.preview-cell--dragging').forEach((n) => {
+      n.classList.remove('preview-cell--dragging');
+    });
+    clearSwapHighlight();
+    removeDocListeners();
+
+    if (targetSlot >= 0 && targetSlot !== slot) {
+      setSwapPick(null);
+      callbacks.onSwapSlots(slot, targetSlot);
+    }
+
+    drag = null;
   }
 
   function renderOverlays() {
@@ -37,6 +101,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       const el = document.createElement('div');
       el.className = 'preview-cell';
       if (cell.slotIndex === selectedSlot) el.classList.add('preview-cell--selected');
+      if (cell.slotIndex === swapPickSlot) el.classList.add('preview-cell--swap-pick');
       el.dataset.slot = String(cell.slotIndex);
       el.dataset.imageIndex = String(cell.imageIndex);
       el.style.left = pct(cell.x, width);
@@ -44,9 +109,10 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       el.style.width = pct(cell.w, width);
       el.style.height = pct(cell.h, height);
 
-      const handle = document.createElement('button');
-      handle.type = 'button';
+      const handle = document.createElement('div');
       handle.className = 'preview-cell-handle';
+      handle.setAttribute('role', 'button');
+      handle.setAttribute('tabindex', '0');
       handle.setAttribute('aria-label', `Position ${cell.slotIndex + 1} tauschen`);
       handle.textContent = String(cell.slotIndex + 1);
 
@@ -55,24 +121,18 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     });
   }
 
-  function slotFromPoint(clientX, clientY) {
-    const cell = document.elementFromPoint(clientX, clientY)?.closest?.('.preview-cell');
-    if (!cell || !overlay.contains(cell)) return -1;
-    return Number(/** @type {HTMLElement} */ (cell).dataset.slot);
-  }
-
-  function clearSwapHighlight() {
-    overlay.querySelectorAll('.preview-cell--swap-target').forEach((n) => {
-      n.classList.remove('preview-cell--swap-target');
-    });
-  }
-
-  function highlightSwapTarget(clientX, clientY, fromSlot) {
-    clearSwapHighlight();
-    const target = slotFromPoint(clientX, clientY);
-    if (target >= 0 && target !== fromSlot) {
-      overlay.querySelector(`[data-slot="${target}"]`)?.classList.add('preview-cell--swap-target');
+  function tryTapSwap(slot) {
+    if (swapPickSlot === null) {
+      setSwapPick(slot);
+      return;
     }
+    if (swapPickSlot === slot) {
+      setSwapPick(null);
+      return;
+    }
+    const from = swapPickSlot;
+    setSwapPick(null);
+    callbacks.onSwapSlots(from, slot);
   }
 
   overlay.addEventListener('pointerdown', (e) => {
@@ -96,8 +156,57 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     if (handle) {
       e.preventDefault();
       handle.setPointerCapture(e.pointerId);
-      drag = { mode: 'swap', slot, pointerId: e.pointerId };
+
+      drag = {
+        mode: 'swap',
+        slot,
+        pointerId: e.pointerId,
+        targetSlot: -1,
+        moved: false,
+        startX: e.clientX,
+        startY: e.clientY,
+      };
       cellEl.classList.add('preview-cell--dragging');
+
+      docMoveHandler = (ev) => {
+        if (!drag || drag.mode !== 'swap' || ev.pointerId !== drag.pointerId) return;
+
+        const dist = Math.hypot(ev.clientX - drag.startX, ev.clientY - drag.startY);
+        if (dist > 8) drag.moved = true;
+
+        const hovered = slotFromPoint(ev.clientX, ev.clientY);
+        drag.targetSlot = hovered >= 0 && hovered !== drag.slot ? hovered : -1;
+        highlightSwapTarget(drag.targetSlot, drag.slot);
+      };
+
+      docEndHandler = (ev) => {
+        if (!drag || drag.mode !== 'swap' || ev.pointerId !== drag.pointerId) return;
+
+        if (!drag.moved) {
+          tryTapSwap(drag.slot);
+          if (ev.target instanceof Element && ev.target.hasPointerCapture(ev.pointerId)) {
+            ev.target.releasePointerCapture(ev.pointerId);
+          }
+          overlay.querySelectorAll('.preview-cell--dragging').forEach((n) => {
+            n.classList.remove('preview-cell--dragging');
+          });
+          clearSwapHighlight();
+          removeDocListeners();
+          drag = null;
+          return;
+        }
+
+        finishSwapDrag();
+      };
+
+      document.addEventListener('pointermove', docMoveHandler);
+      document.addEventListener('pointerup', docEndHandler);
+      document.addEventListener('pointercancel', docEndHandler);
+      return;
+    }
+
+    if (swapPickSlot !== null) {
+      tryTapSwap(slot);
       return;
     }
 
@@ -141,12 +250,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       return;
     }
 
-    if (!drag || e.pointerId !== drag.pointerId) return;
-
-    if (drag.mode === 'swap') {
-      highlightSwapTarget(e.clientX, e.clientY, drag.slot);
-      return;
-    }
+    if (!drag || drag.mode !== 'pan' || e.pointerId !== drag.pointerId) return;
 
     const geometry = callbacks.getGeometry();
     const cell = geometry?.cells.find((c) => c.slotIndex === drag.slot);
@@ -169,30 +273,18 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     });
   });
 
-  function endPointer(e) {
+  function endPan(e) {
     pinchPointers.delete(e.pointerId);
     if (pinchPointers.size < 2) pinch = null;
 
-    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (!drag || drag.mode !== 'pan' || e.pointerId !== drag.pointerId) return;
 
-    if (drag.mode === 'swap') {
-      const target = slotFromPoint(e.clientX, e.clientY);
-      if (target >= 0 && target !== drag.slot) {
-        callbacks.onSwapSlots(drag.slot, target);
-      }
-    } else {
-      callbacks.onInteractionEnd();
-    }
-
-    overlay.querySelectorAll('.preview-cell--dragging').forEach((n) => {
-      n.classList.remove('preview-cell--dragging');
-    });
-    clearSwapHighlight();
+    callbacks.onInteractionEnd();
     drag = null;
   }
 
-  overlay.addEventListener('pointerup', endPointer);
-  overlay.addEventListener('pointercancel', endPointer);
+  overlay.addEventListener('pointerup', endPan);
+  overlay.addEventListener('pointercancel', endPan);
 
   overlay.addEventListener(
     'wheel',
@@ -215,6 +307,9 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   return {
     update() {
       renderOverlays();
+    },
+    cancelSwapPick() {
+      setSwapPick(null);
     },
   };
 }
