@@ -31,7 +31,7 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html manifest.json sw.js .nojekyll _site/
-          cp -r css js icons _site/
+          cp -r css js icons _site/ && test -f _site/js/reorder.js
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
