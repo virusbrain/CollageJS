@@ -35,7 +35,7 @@
         multiple
         hidden
       >
-      <p class="hint">Am Griff ⠿ ziehen zum Umsortieren · mind. 2 Bilder</p>
+      <p class="hint">Mindestens 2 Bilder für eine Collage</p>
     </section>
 
     <section class="panel" aria-labelledby="layout-heading">
@@ -58,8 +58,12 @@
 
     <section class="panel preview-panel" aria-labelledby="preview-heading">
       <h2 id="preview-heading">Vorschau</h2>
+      <p class="preview-hint">Nummer ziehen = tauschen · Wischen = Bild positionieren · Pinch = Zoom</p>
       <div class="preview-wrap">
-        <canvas id="preview-canvas" aria-label="Collage-Vorschau"></canvas>
+        <div id="preview-stage" class="preview-stage" hidden>
+          <canvas id="preview-canvas" aria-label="Collage-Vorschau"></canvas>
+          <div id="preview-overlay" class="preview-overlay" aria-label="Collage bearbeiten"></div>
+        </div>
         <p id="preview-placeholder" class="preview-placeholder">
           Bilder hinzufügen, um die Vorschau zu sehen
         </p>

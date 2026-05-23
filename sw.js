@@ -1,4 +1,4 @@
-const CACHE = 'collagejs-v2';
+const CACHE = 'collagejs-v3';
 
 const ASSETS = [
   './',
@@ -7,7 +7,7 @@ const ASSETS = [
   './js/app.js',
   './js/collage.js',
   './js/layouts.js',
-  './js/reorder.js',
+  './js/preview-editor.js',
   './manifest.json',
   './icons/icon.svg',
 ];
