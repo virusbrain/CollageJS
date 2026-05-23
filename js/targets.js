@@ -95,39 +95,3 @@ export const TARGETS = [
 export function findTarget(targetId) {
   return TARGETS.find((t) => t.id === targetId) ?? TARGETS[0];
 }
-
-/**
- * @param {number} contentW
- * @param {number} contentH
- * @param {CollageTarget} target
- * @param {number} previewMax
- */
-export function fitContentInTarget(contentW, contentH, target, previewMax) {
-  if (!target.width || !target.height) {
-    const scale = Math.min(1, previewMax / Math.max(contentW, contentH));
-    return {
-      canvasW: Math.round(contentW * scale),
-      canvasH: Math.round(contentH * scale),
-      scale,
-      offsetX: 0,
-      offsetY: 0,
-    };
-  }
-
-  const fitScale = Math.min(target.width / contentW, target.height / contentH);
-  const drawnW = contentW * fitScale;
-  const drawnH = contentH * fitScale;
-  const offsetX = (target.width - drawnW) / 2;
-  const offsetY = (target.height - drawnH) / 2;
-
-  const longSide = Math.max(target.width, target.height);
-  const previewScale = Math.min(1, previewMax / longSide);
-
-  return {
-    canvasW: Math.round(target.width * previewScale),
-    canvasH: Math.round(target.height * previewScale),
-    scale: fitScale * previewScale,
-    offsetX: Math.round(offsetX * previewScale),
-    offsetY: Math.round(offsetY * previewScale),
-  };
-}

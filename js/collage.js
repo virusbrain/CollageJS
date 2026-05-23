@@ -1,5 +1,5 @@
 import { findLayout } from './layouts.js';
-import { findTarget, fitContentInTarget } from './targets.js';
+import { findTarget } from './targets.js';
 
 const EXPORT_MAX = 2400;
 
@@ -32,22 +32,50 @@ export function drawCoverWithTransform(img, x, y, w, h, ctx, transform = { panX:
 }
 
 /**
- * @param {HTMLImageElement[]} images
- * @param {{ layoutId: string, gap: number, targetId?: string, previewMax?: number }} options
+ * Zielformat: Layout füllt die gesamte Fläche (keine Ränder).
+ * @param {import('./layouts.js').CellDef[]} layoutCells
+ * @param {{ width: number, height: number }} target
+ * @param {number} gap
+ * @param {number} previewMax
  */
-function computeContentGeometry(images, options) {
-  const layout = findLayout(options.layoutId, images.length);
-  if (!layout || images.length < 2) return null;
+function geometryForTarget(layoutCells, target, gap, previewMax) {
+  const longSide = Math.max(target.width, target.height);
+  const previewScale = Math.min(1, previewMax / longSide);
+  const canvasW = Math.round(target.width * previewScale);
+  const canvasH = Math.round(target.height * previewScale);
+  const gapPx = gap * previewScale;
 
-  const gap = options.gap;
+  const cells = layoutCells.map((cell, slotIndex) => {
+    const insetL = cell.x > 0 ? gapPx / 2 : 0;
+    const insetT = cell.y > 0 ? gapPx / 2 : 0;
+    const insetR = cell.x + cell.w < 1 ? gapPx / 2 : 0;
+    const insetB = cell.y + cell.h < 1 ? gapPx / 2 : 0;
 
+    return {
+      slotIndex,
+      imageIndex: slotIndex,
+      x: Math.round(cell.x * canvasW + insetL),
+      y: Math.round(cell.y * canvasH + insetT),
+      w: Math.max(1, Math.round(cell.w * canvasW - insetL - insetR)),
+      h: Math.max(1, Math.round(cell.h * canvasH - insetT - insetB)),
+    };
+  });
+
+  return { width: canvasW, height: canvasH, cells };
+}
+
+/**
+ * Freies Format: Größe ergibt sich aus den Bildproportionen.
+ * @param {HTMLImageElement[]} images
+ * @param {import('./layouts.js').CellDef[]} layoutCells
+ * @param {number} gap
+ * @param {number} previewMax
+ */
+function geometryFree(images, layoutCells, gap, previewMax) {
   const refs = images.map((img) => ({
     w: img.naturalWidth || 1,
     h: img.naturalHeight || 1,
   }));
-
-  const layoutCells = layout.cells;
-  if (!layoutCells.length || layoutCells.length < images.length) return null;
 
   let unit = 0;
   layoutCells.forEach((cell, i) => {
@@ -55,31 +83,33 @@ function computeContentGeometry(images, options) {
     unit = Math.max(unit, ref.w / cell.w, ref.h / cell.h);
   });
 
-  const contentW = Math.max(...layoutCells.map((c) => (c.x + c.w) * unit));
-  const contentH = Math.max(...layoutCells.map((c) => (c.y + c.h) * unit));
-  const totalW = contentW + gap;
-  const totalH = contentH + gap;
+  const contentW = Math.max(...layoutCells.map((c) => (c.x + c.w) * unit)) + gap;
+  const contentH = Math.max(...layoutCells.map((c) => (c.y + c.h) * unit)) + gap;
+  const scale = Math.min(1, previewMax / Math.max(contentW, contentH));
+  const canvasW = Math.round(contentW * scale);
+  const canvasH = Math.round(contentH * scale);
+  const gapPx = gap * scale;
 
   const cells = layoutCells.map((cell, slotIndex) => {
-    const insetL = cell.x > 0 ? gap / 2 : 0;
-    const insetT = cell.y > 0 ? gap / 2 : 0;
-    const insetR = cell.x + cell.w < 1 ? gap / 2 : 0;
-    const insetB = cell.y + cell.h < 1 ? gap / 2 : 0;
+    const insetL = cell.x > 0 ? gapPx / 2 : 0;
+    const insetT = cell.y > 0 ? gapPx / 2 : 0;
+    const insetR = cell.x + cell.w < 1 ? gapPx / 2 : 0;
+    const insetB = cell.y + cell.h < 1 ? gapPx / 2 : 0;
 
-    const w = Math.max(1, cell.w * unit - insetL - insetR);
-    const h = Math.max(1, cell.h * unit - insetT - insetB);
+    const w = Math.max(1, cell.w * unit * scale - insetL - insetR);
+    const h = Math.max(1, cell.h * unit * scale - insetT - insetB);
 
     return {
       slotIndex,
       imageIndex: slotIndex,
-      x: cell.x * unit + insetL,
-      y: cell.y * unit + insetT,
-      w,
-      h,
+      x: Math.round(cell.x * unit * scale + insetL),
+      y: Math.round(cell.y * unit * scale + insetT),
+      w: Math.round(w),
+      h: Math.round(h),
     };
   });
 
-  return { contentW: totalW, contentH: totalH, cells };
+  return { width: canvasW, height: canvasH, cells };
 }
 
 /**
@@ -87,27 +117,21 @@ function computeContentGeometry(images, options) {
  * @param {{ layoutId: string, gap: number, targetId?: string, previewMax?: number }} options
  */
 export function computeCollageGeometry(images, options) {
-  const content = computeContentGeometry(images, options);
-  if (!content) return null;
+  const layout = findLayout(options.layoutId, images.length);
+  if (!layout || images.length < 2) return null;
 
+  const layoutCells = layout.cells;
+  if (!layoutCells.length || layoutCells.length < images.length) return null;
+
+  const gap = options.gap;
   const previewMax = options.previewMax ?? 1200;
   const target = findTarget(options.targetId ?? 'free');
-  const fit = fitContentInTarget(content.contentW, content.contentH, target, previewMax);
 
-  const cells = content.cells.map((cell) => ({
-    slotIndex: cell.slotIndex,
-    imageIndex: cell.imageIndex,
-    x: Math.round(cell.x * fit.scale + fit.offsetX),
-    y: Math.round(cell.y * fit.scale + fit.offsetY),
-    w: Math.max(1, Math.round(cell.w * fit.scale)),
-    h: Math.max(1, Math.round(cell.h * fit.scale)),
-  }));
+  if (target.width && target.height) {
+    return geometryForTarget(layoutCells, target, gap, previewMax);
+  }
 
-  return {
-    width: fit.canvasW,
-    height: fit.canvasH,
-    cells,
-  };
+  return geometryFree(images, layoutCells, gap, previewMax);
 }
 
 /**
