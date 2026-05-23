@@ -144,7 +144,18 @@ function swapSlots(fromSlot, toSlot) {
   images[toSlot] = a;
 
   renderThumbnails();
-  refreshPreview();
+
+  const canvas = drawPreviewCanvas();
+  if (canvas) paintPreviewCanvas(canvas);
+
+  lastExportCanvas = buildCollageCanvas(
+    images.map((i) => i.image),
+    getOptions(2400),
+    getTransforms()
+  );
+
+  previewEditor?.update();
+  updateActionButtons();
   setStatus(`Position ${fromSlot + 1} ↔ ${toSlot + 1} getauscht`, 'success');
 }
 
@@ -403,6 +414,13 @@ if (previewStage && previewCanvas && previewOverlay) {
     getGeometry: () => getGeometry(900),
     getTransform: (imageIndex) => images[imageIndex]?.transform ?? defaultTransform(),
     onSwapSlots: swapSlots,
+    onSwapArm: (slot) => {
+      if (slot === null) {
+        setStatus('');
+      } else {
+        setStatus(`Position ${slot + 1} gewählt – andere Nummer antippen`, 'success');
+      }
+    },
     onTransform: (imageIndex, transform) => {
       if (!images[imageIndex]) return;
       images[imageIndex].transform = transform;

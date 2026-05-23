@@ -1,12 +1,12 @@
 /**
- * Interaktive Vorschau: Reihenfolge tauschen (Ziehen oder Tippen), Bild positionieren & zoomen.
+ * Interaktive Vorschau – iOS-taugliches Tauschen per Touch, Pan/Zoom per Pointer.
  */
 export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   let selectedSlot = 0;
-  /** @type {number | null} Erste getippte Position zum Tauschen */
+  /** @type {number | null} */
   let swapPickSlot = null;
 
-  /** @type {{ mode: 'swap', slot: number, pointerId: number, targetSlot: number, moved: boolean } | { mode: 'pan', slot: number, imageIndex: number, pointerId: number, startX: number, startY: number, startPanX: number, startPanY: number } | null} */
+  /** @type {{ mode: 'pan', slot: number, imageIndex: number, pointerId: number, startX: number, startY: number, startPanX: number, startPanY: number } | null} */
   let drag = null;
 
   /** @type {Map<number, { x: number, y: number }>} */
@@ -14,10 +14,15 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   /** @type {{ imageIndex: number, startDist: number, startZoom: number } | null} */
   let pinch = null;
 
-  /** @type {((e: PointerEvent) => void) | null} */
-  let docMoveHandler = null;
-  /** @type {((e: PointerEvent) => void) | null} */
-  let docEndHandler = null;
+  /** @type {{ slot: number, targetSlot: number, startX: number, startY: number, moved: boolean } | null} */
+  let touchSwap = null;
+
+  /** Letzter Touch-Zeitstempel – verhindert doppelte Pointer-Events auf iOS */
+  let suppressPointerUntil = 0;
+
+  const preferTouchSwap =
+    typeof window !== 'undefined' &&
+    (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0);
 
   function pct(value, total) {
     return `${(value / total) * 100}%`;
@@ -48,6 +53,9 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     clearSwapHighlight();
     if (slot !== null) {
       overlay.querySelector(`[data-slot="${slot}"]`)?.classList.add('preview-cell--swap-pick');
+      callbacks.onSwapArm?.(slot);
+    } else {
+      callbacks.onSwapArm?.(null);
     }
   }
 
@@ -60,34 +68,125 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     }
   }
 
-  function removeDocListeners() {
-    if (docMoveHandler) {
-      document.removeEventListener('pointermove', docMoveHandler);
-      docMoveHandler = null;
+  function tryTapSwap(slot) {
+    if (swapPickSlot === null) {
+      setSwapPick(slot);
+      return;
     }
-    if (docEndHandler) {
-      document.removeEventListener('pointerup', docEndHandler);
-      document.removeEventListener('pointercancel', docEndHandler);
-      docEndHandler = null;
+    if (swapPickSlot === slot) {
+      setSwapPick(null);
+      return;
     }
+    const from = swapPickSlot;
+    setSwapPick(null);
+    callbacks.onSwapSlots(from, slot);
   }
 
-  function finishSwapDrag() {
-    if (!drag || drag.mode !== 'swap') return;
+  function removeTouchSwapListeners() {
+    if (!touchSwap?.cleanup) return;
+    touchSwap.cleanup();
+    touchSwap = null;
+  }
 
-    const { slot, targetSlot } = drag;
-    overlay.querySelectorAll('.preview-cell--dragging').forEach((n) => {
-      n.classList.remove('preview-cell--dragging');
-    });
-    clearSwapHighlight();
-    removeDocListeners();
+  /**
+   * @param {HTMLElement} handle
+   * @param {number} slot
+   * @param {HTMLElement} cellEl
+   */
+  function bindTouchSwapHandle(handle, slot, cellEl) {
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
 
-    if (targetSlot >= 0 && targetSlot !== slot) {
-      setSwapPick(null);
-      callbacks.onSwapSlots(slot, targetSlot);
-    }
+      suppressPointerUntil = Date.now() + 600;
+      e.preventDefault();
+      e.stopPropagation();
 
-    drag = null;
+      const t = e.touches[0];
+      touchSwap = {
+        slot,
+        targetSlot: -1,
+        startX: t.clientX,
+        startY: t.clientY,
+        moved: false,
+        cleanup: null,
+      };
+
+      cellEl.classList.add('preview-cell--dragging');
+
+      const onTouchMove = (ev) => {
+        if (!touchSwap || touchSwap.slot !== slot) return;
+        ev.preventDefault();
+
+        const touch = ev.touches[0];
+        if (!touch) return;
+
+        const dist = Math.hypot(touch.clientX - touchSwap.startX, touch.clientY - touchSwap.startY);
+        if (dist > 10) touchSwap.moved = true;
+
+        const hovered = slotFromPoint(touch.clientX, touch.clientY);
+        touchSwap.targetSlot = hovered >= 0 && hovered !== slot ? hovered : -1;
+        highlightSwapTarget(touchSwap.targetSlot, slot);
+      };
+
+      const onTouchEnd = (ev) => {
+        if (!touchSwap || touchSwap.slot !== slot) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        const touch = ev.changedTouches[0];
+        if (touch && !touchSwap.moved) {
+          const dist = Math.hypot(touch.clientX - touchSwap.startX, touch.clientY - touchSwap.startY);
+          if (dist > 14) touchSwap.moved = true;
+        }
+
+        cellEl.classList.remove('preview-cell--dragging');
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+        document.removeEventListener('touchcancel', onTouchEnd);
+
+        if (!touchSwap.moved) {
+          tryTapSwap(slot);
+        } else if (touchSwap.targetSlot >= 0) {
+          setSwapPick(null);
+          callbacks.onSwapSlots(slot, touchSwap.targetSlot);
+        }
+
+        clearSwapHighlight();
+        touchSwap = null;
+      };
+
+      touchSwap.cleanup = () => {
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+        document.removeEventListener('touchcancel', onTouchEnd);
+        cellEl.classList.remove('preview-cell--dragging');
+      };
+
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('touchend', onTouchEnd, { passive: false });
+      document.addEventListener('touchcancel', onTouchEnd, { passive: false });
+    };
+
+    handle.addEventListener('touchstart', onTouchStart, { passive: false });
+  }
+
+  /**
+   * @param {HTMLElement} cellEl
+   * @param {number} slot
+   */
+  function bindTouchSwapCell(cellEl, slot) {
+    cellEl.addEventListener(
+      'touchend',
+      (e) => {
+        if (swapPickSlot === null || swapPickSlot === slot) return;
+        if (e.target.closest('.preview-cell-handle')) return;
+
+        suppressPointerUntil = Date.now() + 600;
+        e.preventDefault();
+        tryTapSwap(slot);
+      },
+      { passive: false }
+    );
   }
 
   function renderOverlays() {
@@ -112,30 +211,20 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       const handle = document.createElement('div');
       handle.className = 'preview-cell-handle';
       handle.setAttribute('role', 'button');
-      handle.setAttribute('tabindex', '0');
       handle.setAttribute('aria-label', `Position ${cell.slotIndex + 1} tauschen`);
       handle.textContent = String(cell.slotIndex + 1);
 
       el.appendChild(handle);
       overlay.appendChild(el);
+
+      bindTouchSwapHandle(handle, cell.slotIndex, el);
+      bindTouchSwapCell(el, cell.slotIndex);
     });
   }
 
-  function tryTapSwap(slot) {
-    if (swapPickSlot === null) {
-      setSwapPick(slot);
-      return;
-    }
-    if (swapPickSlot === slot) {
-      setSwapPick(null);
-      return;
-    }
-    const from = swapPickSlot;
-    setSwapPick(null);
-    callbacks.onSwapSlots(from, slot);
-  }
-
   overlay.addEventListener('pointerdown', (e) => {
+    if (Date.now() < suppressPointerUntil) return;
+
     const handle = /** @type {HTMLElement} */ (e.target).closest('.preview-cell-handle');
     const cellEl = /** @type {HTMLElement} */ (e.target).closest('.preview-cell');
     if (!cellEl) return;
@@ -154,58 +243,49 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     }
 
     if (handle) {
+      if (preferTouchSwap) return;
+
       e.preventDefault();
       handle.setPointerCapture(e.pointerId);
 
-      drag = {
-        mode: 'swap',
-        slot,
-        pointerId: e.pointerId,
-        targetSlot: -1,
-        moved: false,
-        startX: e.clientX,
-        startY: e.clientY,
-      };
+      let targetSlot = -1;
+      let moved = false;
+      const startX = e.clientX;
+      const startY = e.clientY;
+
       cellEl.classList.add('preview-cell--dragging');
 
-      docMoveHandler = (ev) => {
-        if (!drag || drag.mode !== 'swap' || ev.pointerId !== drag.pointerId) return;
-
-        const dist = Math.hypot(ev.clientX - drag.startX, ev.clientY - drag.startY);
-        if (dist > 8) drag.moved = true;
-
+      const onMove = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+        if (dist > 8) moved = true;
         const hovered = slotFromPoint(ev.clientX, ev.clientY);
-        drag.targetSlot = hovered >= 0 && hovered !== drag.slot ? hovered : -1;
-        highlightSwapTarget(drag.targetSlot, drag.slot);
+        targetSlot = hovered >= 0 && hovered !== slot ? hovered : -1;
+        highlightSwapTarget(targetSlot, slot);
       };
 
-      docEndHandler = (ev) => {
-        if (!drag || drag.mode !== 'swap' || ev.pointerId !== drag.pointerId) return;
+      const onUp = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('pointercancel', onUp);
+        cellEl.classList.remove('preview-cell--dragging');
+        clearSwapHighlight();
 
-        if (!drag.moved) {
-          tryTapSwap(drag.slot);
-          if (ev.target instanceof Element && ev.target.hasPointerCapture(ev.pointerId)) {
-            ev.target.releasePointerCapture(ev.pointerId);
-          }
-          overlay.querySelectorAll('.preview-cell--dragging').forEach((n) => {
-            n.classList.remove('preview-cell--dragging');
-          });
-          clearSwapHighlight();
-          removeDocListeners();
-          drag = null;
-          return;
+        if (!moved) tryTapSwap(slot);
+        else if (targetSlot >= 0) {
+          setSwapPick(null);
+          callbacks.onSwapSlots(slot, targetSlot);
         }
-
-        finishSwapDrag();
       };
 
-      document.addEventListener('pointermove', docMoveHandler);
-      document.addEventListener('pointerup', docEndHandler);
-      document.addEventListener('pointercancel', docEndHandler);
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onUp);
       return;
     }
 
-    if (swapPickSlot !== null) {
+    if (swapPickSlot !== null && !preferTouchSwap) {
       tryTapSwap(slot);
       return;
     }
@@ -236,6 +316,8 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   });
 
   overlay.addEventListener('pointermove', (e) => {
+    if (Date.now() < suppressPointerUntil) return;
+
     if (pinchPointers.has(e.pointerId)) {
       pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -274,6 +356,8 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   });
 
   function endPan(e) {
+    if (Date.now() < suppressPointerUntil) return;
+
     pinchPointers.delete(e.pointerId);
     if (pinchPointers.size < 2) pinch = null;
 
@@ -306,6 +390,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
   return {
     update() {
+      removeTouchSwapListeners();
       renderOverlays();
     },
     cancelSwapPick() {
