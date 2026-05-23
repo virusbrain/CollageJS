@@ -1,4 +1,5 @@
 import { findLayout } from './layouts.js';
+import { findTarget, fitContentInTarget } from './targets.js';
 
 const EXPORT_MAX = 2400;
 
@@ -32,14 +33,13 @@ export function drawCoverWithTransform(img, x, y, w, h, ctx, transform = { panX:
 
 /**
  * @param {HTMLImageElement[]} images
- * @param {{ layoutId: string, gap: number, previewMax?: number }} options
+ * @param {{ layoutId: string, gap: number, targetId?: string, previewMax?: number }} options
  */
-export function computeCollageGeometry(images, options) {
+function computeContentGeometry(images, options) {
   const layout = findLayout(options.layoutId, images.length);
   if (!layout || images.length < 2) return null;
 
   const gap = options.gap;
-  const previewMax = options.previewMax ?? 1200;
 
   const refs = images.map((img) => ({
     w: img.naturalWidth || 1,
@@ -56,37 +56,60 @@ export function computeCollageGeometry(images, options) {
   const contentH = Math.max(...layout.cells.map((c) => (c.y + c.h) * unit));
   const totalW = contentW + gap;
   const totalH = contentH + gap;
-  const scale = Math.min(1, previewMax / Math.max(totalW, totalH));
-  const width = Math.round(totalW * scale);
-  const height = Math.round(totalH * scale);
-  const sUnit = unit * scale;
-  const sGap = gap * scale;
 
   const cells = layout.cells.map((cell, slotIndex) => {
-    const insetL = cell.x > 0 ? sGap / 2 : 0;
-    const insetT = cell.y > 0 ? sGap / 2 : 0;
-    const insetR = cell.x + cell.w < 1 ? sGap / 2 : 0;
-    const insetB = cell.y + cell.h < 1 ? sGap / 2 : 0;
+    const insetL = cell.x > 0 ? gap / 2 : 0;
+    const insetT = cell.y > 0 ? gap / 2 : 0;
+    const insetR = cell.x + cell.w < 1 ? gap / 2 : 0;
+    const insetB = cell.y + cell.h < 1 ? gap / 2 : 0;
 
-    const w = Math.max(1, Math.round(cell.w * sUnit - insetL - insetR));
-    const h = Math.max(1, Math.round(cell.h * sUnit - insetT - insetB));
+    const w = Math.max(1, cell.w * unit - insetL - insetR);
+    const h = Math.max(1, cell.h * unit - insetT - insetB);
 
     return {
       slotIndex,
       imageIndex: slotIndex,
-      x: Math.round(cell.x * sUnit + insetL),
-      y: Math.round(cell.y * sUnit + insetT),
+      x: cell.x * unit + insetL,
+      y: cell.y * unit + insetT,
       w,
       h,
     };
   });
 
-  return { width, height, cells };
+  return { contentW: totalW, contentH: totalH, cells };
 }
 
 /**
  * @param {HTMLImageElement[]} images
- * @param {{ layoutId: string, gap: number, background: string, previewMax?: number }} options
+ * @param {{ layoutId: string, gap: number, targetId?: string, previewMax?: number }} options
+ */
+export function computeCollageGeometry(images, options) {
+  const content = computeContentGeometry(images, options);
+  if (!content) return null;
+
+  const previewMax = options.previewMax ?? 1200;
+  const target = findTarget(options.targetId ?? 'free');
+  const fit = fitContentInTarget(content.contentW, content.contentH, target, previewMax);
+
+  const cells = content.cells.map((cell) => ({
+    slotIndex: cell.slotIndex,
+    imageIndex: cell.imageIndex,
+    x: Math.round(cell.x * fit.scale + fit.offsetX),
+    y: Math.round(cell.y * fit.scale + fit.offsetY),
+    w: Math.max(1, Math.round(cell.w * fit.scale)),
+    h: Math.max(1, Math.round(cell.h * fit.scale)),
+  }));
+
+  return {
+    width: fit.canvasW,
+    height: fit.canvasH,
+    cells,
+  };
+}
+
+/**
+ * @param {HTMLImageElement[]} images
+ * @param {{ layoutId: string, gap: number, background: string, targetId?: string, previewMax?: number }} options
  * @param {ImageTransform[]} [transforms]
  * @returns {HTMLCanvasElement | null}
  */
@@ -120,14 +143,31 @@ export function buildCollageCanvas(images, options, transforms) {
 
 /**
  * @param {HTMLCanvasElement} source
- * @param {number} maxSide
+ * @param {{ targetId?: string }} [options]
  * @returns {HTMLCanvasElement}
  */
-export function upscaleForExport(source, maxSide = EXPORT_MAX) {
-  const max = Math.max(source.width, source.height);
-  if (max >= maxSide) return source;
+export function upscaleForExport(source, options = {}) {
+  const target = findTarget(options.targetId ?? 'free');
 
-  const scale = maxSide / max;
+  if (target.width && target.height) {
+    if (source.width === target.width && source.height === target.height) {
+      return source;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = target.width;
+    canvas.height = target.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return source;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, target.width, target.height);
+    return canvas;
+  }
+
+  const max = Math.max(source.width, source.height);
+  if (max >= EXPORT_MAX) return source;
+
+  const scale = EXPORT_MAX / max;
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(source.width * scale);
   canvas.height = Math.round(source.height * scale);

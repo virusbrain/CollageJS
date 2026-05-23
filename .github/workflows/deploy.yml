@@ -33,6 +33,7 @@ jobs:
           cp index.html manifest.json sw.js .nojekyll _site/
           cp -r css js icons _site/
           test -f _site/js/preview-editor.js
+          test -f _site/js/targets.js
           test -f _site/js/app.js
 
       - name: Upload artifact

@@ -1,4 +1,5 @@
 import { LAYOUTS, layoutsForCount } from './layouts.js';
+import { TARGETS, findTarget } from './targets.js';
 import {
   buildCollageCanvas,
   computeCollageGeometry,
@@ -11,12 +12,14 @@ import { initPreviewEditor } from './preview-editor.js';
 /** @type {ImageItem[]} */
 let images = [];
 let selectedLayoutId = 'row-2';
+let selectedTargetId = 'free';
 /** @type {HTMLCanvasElement | null} */
 let lastExportCanvas = null;
 let previewRetryTimer = 0;
 
 const fileInput = document.getElementById('file-input');
 const imageList = document.getElementById('image-list');
+const targetGrid = document.getElementById('target-grid');
 const layoutGrid = document.getElementById('layout-grid');
 const gapSlider = document.getElementById('gap-slider');
 const gapValue = document.getElementById('gap-value');
@@ -64,8 +67,17 @@ function getOptions(previewMax = 900) {
     layoutId: selectedLayoutId,
     gap: Number(gapSlider.value),
     background: bgColor.value,
+    targetId: selectedTargetId,
     previewMax,
   };
+}
+
+function getExportOptions() {
+  const target = findTarget(selectedTargetId);
+  if (target.width && target.height) {
+    return getOptions(Math.max(target.width, target.height));
+  }
+  return getOptions(2400);
 }
 
 function getTransforms() {
@@ -90,6 +102,55 @@ function updateActionButtons() {
   const canShare = ready && typeof navigator.share === 'function';
   shareBtn.hidden = !canShare;
   shareBtn.disabled = !canShare;
+}
+
+function targetPreviewSvg(target) {
+  if (!target.width || !target.height) {
+    return '<svg viewBox="0 0 48 48" aria-hidden="true"><text x="24" y="28" text-anchor="middle" font-size="14" fill="currentColor">∿</text></svg>';
+  }
+  const max = 36;
+  const scale = max / Math.max(target.width, target.height);
+  const w = target.width * scale;
+  const h = target.height * scale;
+  const x = (48 - w) / 2;
+  const y = (48 - h) / 2;
+  return `<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="currentColor"/></svg>`;
+}
+
+function renderTargetButtons() {
+  targetGrid.innerHTML = '';
+  TARGETS.forEach((target) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'target-btn';
+    btn.setAttribute('role', 'radio');
+    btn.setAttribute('aria-checked', String(target.id === selectedTargetId));
+    btn.setAttribute('aria-label', `${target.label}, ${target.hint}`);
+    btn.title = target.hint;
+
+    const icon = document.createElement('span');
+    icon.className = 'target-btn-icon';
+    icon.innerHTML = targetPreviewSvg(target);
+
+    const label = document.createElement('span');
+    label.className = 'target-btn-label';
+    label.textContent = target.label;
+
+    const hint = document.createElement('span');
+    hint.className = 'target-btn-hint';
+    hint.textContent = target.hint;
+
+    btn.appendChild(icon);
+    btn.appendChild(label);
+    btn.appendChild(hint);
+
+    btn.addEventListener('click', () => {
+      selectedTargetId = target.id;
+      renderTargetButtons();
+      refreshPreview();
+    });
+    targetGrid.appendChild(btn);
+  });
 }
 
 function layoutPreviewSvg(layout) {
@@ -150,7 +211,7 @@ function swapSlots(fromSlot, toSlot) {
 
   lastExportCanvas = buildCollageCanvas(
     images.map((i) => i.image),
-    getOptions(2400),
+    getExportOptions(),
     getTransforms()
   );
 
@@ -269,7 +330,7 @@ async function refreshPreview() {
 
   lastExportCanvas = buildCollageCanvas(
     images.map((i) => i.image),
-    getOptions(2400),
+    getExportOptions(),
     getTransforms()
   );
 
@@ -323,7 +384,7 @@ async function handleFiles(fileList) {
 
 async function getExportBlob() {
   if (!lastExportCanvas) throw new Error('Keine Collage');
-  const exportCanvas = upscaleForExport(lastExportCanvas);
+  const exportCanvas = upscaleForExport(lastExportCanvas, { targetId: selectedTargetId });
   return new Promise((resolve, reject) => {
     exportCanvas.toBlob(
       (blob) => (blob ? resolve(blob) : reject(new Error('Export fehlgeschlagen'))),
@@ -430,7 +491,7 @@ if (previewStage && previewCanvas && previewOverlay) {
     onInteractionEnd: () => {
       lastExportCanvas = buildCollageCanvas(
         images.map((i) => i.image),
-        getOptions(2400),
+        getExportOptions(),
         getTransforms()
       );
       updateActionButtons();
@@ -476,6 +537,7 @@ dismissInstall?.addEventListener('click', () => {
 });
 
 registerServiceWorker();
+renderTargetButtons();
 renderLayoutButtons();
 setPreviewVisible(false);
 updateActionButtons();
