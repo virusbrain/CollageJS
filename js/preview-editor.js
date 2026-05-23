@@ -82,8 +82,16 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
     const slot = Number(cellEl.dataset.slot);
     const imageIndex = Number(cellEl.dataset.imageIndex);
-    selectedSlot = slot;
-    renderOverlays();
+
+    if (selectedSlot !== slot) {
+      selectedSlot = slot;
+      overlay.querySelectorAll('.preview-cell').forEach((cell) => {
+        cell.classList.toggle(
+          'preview-cell--selected',
+          Number(/** @type {HTMLElement} */ (cell).dataset.slot) === slot
+        );
+      });
+    }
 
     if (handle) {
       e.preventDefault();

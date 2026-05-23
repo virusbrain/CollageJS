@@ -68,13 +68,16 @@ export function computeCollageGeometry(images, options) {
     const insetR = cell.x + cell.w < 1 ? sGap / 2 : 0;
     const insetB = cell.y + cell.h < 1 ? sGap / 2 : 0;
 
+    const w = Math.max(1, Math.round(cell.w * sUnit - insetL - insetR));
+    const h = Math.max(1, Math.round(cell.h * sUnit - insetT - insetB));
+
     return {
       slotIndex,
       imageIndex: slotIndex,
       x: Math.round(cell.x * sUnit + insetL),
       y: Math.round(cell.y * sUnit + insetT),
-      w: Math.round(cell.w * sUnit - insetL - insetR),
-      h: Math.round(cell.h * sUnit - insetT - insetB),
+      w,
+      h,
     };
   });
 

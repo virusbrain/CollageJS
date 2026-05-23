@@ -13,6 +13,7 @@ let images = [];
 let selectedLayoutId = 'row-2';
 /** @type {HTMLCanvasElement | null} */
 let lastExportCanvas = null;
+let previewRetryTimer = 0;
 
 const fileInput = document.getElementById('file-input');
 const imageList = document.getElementById('image-list');
@@ -20,6 +21,7 @@ const layoutGrid = document.getElementById('layout-grid');
 const gapSlider = document.getElementById('gap-slider');
 const gapValue = document.getElementById('gap-value');
 const bgColor = document.getElementById('bg-color');
+const previewWrap = document.getElementById('preview-wrap');
 const previewStage = document.getElementById('preview-stage');
 const previewCanvas = document.getElementById('preview-canvas');
 const previewOverlay = document.getElementById('preview-overlay');
@@ -41,9 +43,20 @@ function defaultTransform() {
   return { panX: 0, panY: 0, zoom: 1 };
 }
 
+function createImageId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `img-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function setStatus(text, type = '') {
   statusMsg.textContent = text;
   statusMsg.className = 'status-msg' + (type ? ` ${type}` : '');
+}
+
+function setPreviewVisible(visible) {
+  previewWrap?.classList.toggle('has-preview', visible);
 }
 
 function getOptions(previewMax = 900) {
@@ -169,42 +182,79 @@ function renderThumbnails() {
 }
 
 function drawPreviewCanvas() {
-  const canvas = buildCollageCanvas(
+  return buildCollageCanvas(
     images.map((i) => i.image),
     getOptions(900),
     getTransforms()
   );
-  return canvas;
 }
 
-function refreshPreview() {
+function paintPreviewCanvas(canvas) {
+  if (!previewCanvas || !canvas) return false;
+
+  previewCanvas.width = canvas.width;
+  previewCanvas.height = canvas.height;
+  const ctx = previewCanvas.getContext('2d');
+  if (!ctx) return false;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(canvas, 0, 0);
+  return canvas.width > 0 && canvas.height > 0;
+}
+
+async function ensureImagesReady() {
+  for (const item of images) {
+    if (item.image.complete && item.image.naturalWidth > 0) continue;
+    try {
+      if (item.image.decode) {
+        await item.image.decode();
+      }
+    } catch {
+      await new Promise((resolve, reject) => {
+        item.image.onload = () => resolve();
+        item.image.onerror = () => reject(new Error('Bild konnte nicht geladen werden'));
+      });
+    }
+  }
+}
+
+function schedulePreviewRetry() {
+  if (previewRetryTimer) return;
+  previewRetryTimer = window.setTimeout(() => {
+    previewRetryTimer = 0;
+    refreshPreview();
+  }, 120);
+}
+
+async function refreshPreview() {
   if (!canRender()) {
-    previewStage.hidden = true;
-    previewPlaceholder.hidden = false;
+    setPreviewVisible(false);
     lastExportCanvas = null;
     previewEditor?.update();
     updateActionButtons();
     return;
   }
 
-  const loaded = images.every((i) => i.image.complete && i.image.naturalWidth);
-  if (!loaded) return;
-
-  const canvas = drawPreviewCanvas();
-  if (!canvas) {
-    previewStage.hidden = true;
-    previewPlaceholder.hidden = false;
-    lastExportCanvas = null;
+  try {
+    await ensureImagesReady();
+  } catch {
+    setPreviewVisible(false);
+    setStatus('Mindestens ein Bild konnte nicht geladen werden.', 'error');
     updateActionButtons();
+    schedulePreviewRetry();
     return;
   }
 
-  previewPlaceholder.hidden = true;
-  previewStage.hidden = false;
-  previewCanvas.width = canvas.width;
-  previewCanvas.height = canvas.height;
-  const ctx = previewCanvas.getContext('2d');
-  ctx?.drawImage(canvas, 0, 0);
+  const canvas = drawPreviewCanvas();
+  if (!canvas || !paintPreviewCanvas(canvas)) {
+    setPreviewVisible(false);
+    lastExportCanvas = null;
+    updateActionButtons();
+    schedulePreviewRetry();
+    return;
+  }
+
+  setPreviewVisible(true);
 
   lastExportCanvas = buildCollageCanvas(
     images.map((i) => i.image),
@@ -214,6 +264,11 @@ function refreshPreview() {
 
   previewEditor?.update();
   updateActionButtons();
+
+  requestAnimationFrame(() => {
+    const again = drawPreviewCanvas();
+    if (again) paintPreviewCanvas(again);
+  });
 }
 
 function onImagesChanged() {
@@ -227,11 +282,11 @@ function onImagesChanged() {
  * @returns {Promise<void>}
  */
 function addImageFile(file) {
-  if (!file.type.startsWith('image/')) return;
+  if (!file.type.startsWith('image/')) return Promise.resolve();
 
   const url = URL.createObjectURL(file);
   const image = new Image();
-  const id = crypto.randomUUID();
+  const id = createImageId();
 
   return new Promise((resolve) => {
     image.onload = () => {
@@ -241,6 +296,7 @@ function addImageFile(file) {
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
+      setStatus('Ein Bild konnte nicht geladen werden.', 'error');
       resolve();
     };
     image.src = url;
@@ -351,10 +407,7 @@ if (previewStage && previewCanvas && previewOverlay) {
       if (!images[imageIndex]) return;
       images[imageIndex].transform = transform;
       const canvas = drawPreviewCanvas();
-      if (canvas) {
-        const ctx = previewCanvas.getContext('2d');
-        ctx?.drawImage(canvas, 0, 0);
-      }
+      if (canvas) paintPreviewCanvas(canvas);
     },
     onInteractionEnd: () => {
       lastExportCanvas = buildCollageCanvas(
@@ -406,4 +459,5 @@ dismissInstall?.addEventListener('click', () => {
 
 registerServiceWorker();
 renderLayoutButtons();
+setPreviewVisible(false);
 updateActionButtons();

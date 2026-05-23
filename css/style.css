@@ -232,14 +232,19 @@ body {
   justify-content: center;
 }
 
+.preview-wrap:not(.has-preview) .preview-stage {
+  display: none;
+}
+
+.preview-wrap.has-preview .preview-placeholder {
+  display: none;
+}
+
 .preview-stage {
   position: relative;
   width: 100%;
   line-height: 0;
-}
-
-.preview-stage[hidden] {
-  display: none;
+  z-index: 1;
 }
 
 #preview-canvas {
@@ -312,10 +317,6 @@ body {
   color: var(--text-muted);
   font-size: 0.9rem;
   pointer-events: none;
-}
-
-.preview-placeholder[hidden] {
-  display: none;
 }
 
 .btn {
