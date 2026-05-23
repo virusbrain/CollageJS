@@ -117,54 +117,6 @@ body {
   border-radius: 8px;
   overflow: hidden;
   flex-shrink: 0;
-  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
-}
-
-.thumb:active {
-  cursor: grabbing;
-}
-
-.thumb--dragging {
-  opacity: 0.35;
-  transform: scale(0.95);
-}
-
-.thumb--over {
-  box-shadow: 0 0 0 2px var(--accent);
-  transform: scale(1.05);
-}
-
-.thumb--ghost {
-  position: fixed;
-  z-index: 1000;
-  pointer-events: none;
-  opacity: 0.92;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  transform: scale(1.08);
-}
-
-.thumb .drag-handle {
-  position: absolute;
-  bottom: 2px;
-  right: 2px;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.65);
-  color: #fff;
-  font-size: 14px;
-  line-height: 1;
-  cursor: grab;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  touch-action: none;
-}
-
-.thumb .drag-handle:active {
-  cursor: grabbing;
-  background: rgba(108, 92, 231, 0.85);
 }
 
 .thumb img {
@@ -262,6 +214,13 @@ body {
   background: transparent;
 }
 
+.preview-hint {
+  margin: -4px 0 10px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
 .preview-wrap {
   position: relative;
   background: var(--surface-2);
@@ -273,14 +232,76 @@ body {
   justify-content: center;
 }
 
-#preview-canvas {
-  max-width: 100%;
-  height: auto;
-  display: block;
+.preview-stage {
+  position: relative;
+  width: 100%;
+  line-height: 0;
 }
 
-#preview-canvas[hidden] {
+.preview-stage[hidden] {
   display: none;
+}
+
+#preview-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  vertical-align: top;
+}
+
+.preview-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.preview-cell {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: auto;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  touch-action: none;
+}
+
+.preview-cell--selected {
+  border-color: rgba(108, 92, 231, 0.75);
+  box-shadow: inset 0 0 0 1px rgba(108, 92, 231, 0.4);
+}
+
+.preview-cell--swap-target {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(0, 184, 148, 0.5);
+}
+
+.preview-cell--dragging .preview-cell-handle {
+  transform: scale(1.12);
+  background: var(--accent);
+}
+
+.preview-cell-handle {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: grab;
+  touch-action: none;
+  z-index: 2;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s, background 0.12s;
+}
+
+.preview-cell-handle:active {
+  cursor: grabbing;
 }
 
 .preview-placeholder {

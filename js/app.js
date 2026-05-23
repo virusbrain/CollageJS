@@ -1,11 +1,17 @@
 import { LAYOUTS, layoutsForCount } from './layouts.js';
-import { buildCollageCanvas, upscaleForExport } from './collage.js';
-import { enableImageReorder } from './reorder.js';
+import {
+  buildCollageCanvas,
+  computeCollageGeometry,
+  upscaleForExport,
+} from './collage.js';
+import { initPreviewEditor } from './preview-editor.js';
 
-/** @type {{ id: string, url: string, image: HTMLImageElement }[]} */
+/** @typedef {{ id: string, url: string, image: HTMLImageElement, transform: { panX: number, panY: number, zoom: number } }} ImageItem */
+
+/** @type {ImageItem[]} */
 let images = [];
 let selectedLayoutId = 'row-2';
-/** @type {ReturnType<typeof buildCollageCanvas>} */
+/** @type {HTMLCanvasElement | null} */
 let lastExportCanvas = null;
 
 const fileInput = document.getElementById('file-input');
@@ -14,7 +20,9 @@ const layoutGrid = document.getElementById('layout-grid');
 const gapSlider = document.getElementById('gap-slider');
 const gapValue = document.getElementById('gap-value');
 const bgColor = document.getElementById('bg-color');
+const previewStage = document.getElementById('preview-stage');
 const previewCanvas = document.getElementById('preview-canvas');
+const previewOverlay = document.getElementById('preview-overlay');
 const previewPlaceholder = document.getElementById('preview-placeholder');
 const saveBtn = document.getElementById('save-btn');
 const shareBtn = document.getElementById('share-btn');
@@ -26,18 +34,37 @@ const dismissInstall = document.getElementById('dismiss-install');
 /** @type {BeforeInstallPromptEvent | null} */
 let deferredInstallPrompt = null;
 
+/** @type {ReturnType<typeof initPreviewEditor> | null} */
+let previewEditor = null;
+
+function defaultTransform() {
+  return { panX: 0, panY: 0, zoom: 1 };
+}
+
 function setStatus(text, type = '') {
   statusMsg.textContent = text;
   statusMsg.className = 'status-msg' + (type ? ` ${type}` : '');
 }
 
-function getOptions() {
+function getOptions(previewMax = 900) {
   return {
     layoutId: selectedLayoutId,
     gap: Number(gapSlider.value),
     background: bgColor.value,
-    previewMax: 900,
+    previewMax,
   };
+}
+
+function getTransforms() {
+  return images.map((i) => i.transform);
+}
+
+function getGeometry(previewMax = 900) {
+  if (!canRender()) return null;
+  return computeCollageGeometry(
+    images.map((i) => i.image),
+    getOptions(previewMax)
+  );
 }
 
 function canRender() {
@@ -90,18 +117,22 @@ function renderLayoutButtons() {
 }
 
 /**
- * @param {number} fromIndex
- * @param {number} toIndex
+ * @param {number} fromSlot
+ * @param {number} toSlot
  */
-function reorderImages(fromIndex, toIndex) {
-  if (fromIndex === toIndex) return;
-  if (fromIndex < 0 || toIndex < 0) return;
-  if (fromIndex >= images.length || toIndex >= images.length) return;
+function swapSlots(fromSlot, toSlot) {
+  if (fromSlot === toSlot) return;
+  if (fromSlot < 0 || toSlot < 0) return;
+  if (fromSlot >= images.length || toSlot >= images.length) return;
 
-  const [moved] = images.splice(fromIndex, 1);
-  images.splice(toIndex, 0, moved);
+  const a = images[fromSlot];
+  const b = images[toSlot];
+  images[fromSlot] = b;
+  images[toSlot] = a;
+
   renderThumbnails();
   refreshPreview();
+  setStatus(`Position ${fromSlot + 1} ↔ ${toSlot + 1} getauscht`, 'success');
 }
 
 function renderThumbnails() {
@@ -110,23 +141,14 @@ function renderThumbnails() {
     const li = document.createElement('div');
     li.className = 'thumb';
     li.setAttribute('role', 'listitem');
-    li.dataset.index = String(index);
-    li.draggable = true;
 
     const img = document.createElement('img');
     img.src = item.url;
     img.alt = `Bild ${index + 1}`;
-    img.draggable = false;
 
     const order = document.createElement('span');
     order.className = 'order';
     order.textContent = String(index + 1);
-
-    const dragHandle = document.createElement('button');
-    dragHandle.type = 'button';
-    dragHandle.className = 'drag-handle';
-    dragHandle.setAttribute('aria-label', `Bild ${index + 1} verschieben`);
-    dragHandle.textContent = '⠿';
 
     const remove = document.createElement('button');
     remove.type = 'button';
@@ -141,33 +163,36 @@ function renderThumbnails() {
 
     li.appendChild(img);
     li.appendChild(order);
-    li.appendChild(dragHandle);
     li.appendChild(remove);
     imageList.appendChild(li);
   });
 }
 
+function drawPreviewCanvas() {
+  const canvas = buildCollageCanvas(
+    images.map((i) => i.image),
+    getOptions(900),
+    getTransforms()
+  );
+  return canvas;
+}
+
 function refreshPreview() {
   if (!canRender()) {
-    previewCanvas.hidden = true;
+    previewStage.hidden = true;
     previewPlaceholder.hidden = false;
     lastExportCanvas = null;
+    previewEditor?.update();
     updateActionButtons();
     return;
   }
 
-  const loaded = images.map((i) => i.image).filter((img) => img.complete && img.naturalWidth);
-  if (loaded.length < images.length) {
-    return;
-  }
+  const loaded = images.every((i) => i.image.complete && i.image.naturalWidth);
+  if (!loaded) return;
 
-  const canvas = buildCollageCanvas(
-    images.map((i) => i.image),
-    getOptions()
-  );
-
+  const canvas = drawPreviewCanvas();
   if (!canvas) {
-    previewCanvas.hidden = true;
+    previewStage.hidden = true;
     previewPlaceholder.hidden = false;
     lastExportCanvas = null;
     updateActionButtons();
@@ -175,7 +200,7 @@ function refreshPreview() {
   }
 
   previewPlaceholder.hidden = true;
-  previewCanvas.hidden = false;
+  previewStage.hidden = false;
   previewCanvas.width = canvas.width;
   previewCanvas.height = canvas.height;
   const ctx = previewCanvas.getContext('2d');
@@ -183,9 +208,11 @@ function refreshPreview() {
 
   lastExportCanvas = buildCollageCanvas(
     images.map((i) => i.image),
-    { ...getOptions(), previewMax: 2400 }
+    getOptions(2400),
+    getTransforms()
   );
 
+  previewEditor?.update();
   updateActionButtons();
 }
 
@@ -208,7 +235,7 @@ function addImageFile(file) {
 
   return new Promise((resolve) => {
     image.onload = () => {
-      images.push({ id, url, image });
+      images.push({ id, url, image, transform: defaultTransform() });
       onImagesChanged();
       resolve();
     };
@@ -227,9 +254,6 @@ async function handleFiles(fileList) {
   }
 }
 
-/**
- * @returns {Promise<Blob>}
- */
 async function getExportBlob() {
   if (!lastExportCanvas) throw new Error('Keine Collage');
   const exportCanvas = upscaleForExport(lastExportCanvas);
@@ -242,10 +266,6 @@ async function getExportBlob() {
   });
 }
 
-/**
- * @param {Blob} blob
- * @returns {File}
- */
 function blobToFile(blob) {
   const name = `collage-${Date.now()}.jpg`;
   return new File([blob], name, { type: 'image/jpeg' });
@@ -322,6 +342,31 @@ function registerServiceWorker() {
   });
 }
 
+if (previewStage && previewCanvas && previewOverlay) {
+  previewEditor = initPreviewEditor(previewStage, previewCanvas, previewOverlay, {
+    getGeometry: () => getGeometry(900),
+    getTransform: (imageIndex) => images[imageIndex]?.transform ?? defaultTransform(),
+    onSwapSlots: swapSlots,
+    onTransform: (imageIndex, transform) => {
+      if (!images[imageIndex]) return;
+      images[imageIndex].transform = transform;
+      const canvas = drawPreviewCanvas();
+      if (canvas) {
+        const ctx = previewCanvas.getContext('2d');
+        ctx?.drawImage(canvas, 0, 0);
+      }
+    },
+    onInteractionEnd: () => {
+      lastExportCanvas = buildCollageCanvas(
+        images.map((i) => i.image),
+        getOptions(2400),
+        getTransforms()
+      );
+      updateActionButtons();
+    },
+  });
+}
+
 fileInput?.addEventListener('change', (e) => {
   const input = /** @type {HTMLInputElement} */ (e.target);
   if (input.files?.length) handleFiles(input.files);
@@ -358,8 +403,6 @@ dismissInstall?.addEventListener('click', () => {
   installBanner.hidden = true;
   localStorage.setItem('install-dismissed', '1');
 });
-
-enableImageReorder(imageList, { onReorder: reorderImages });
 
 registerServiceWorker();
 renderLayoutButtons();
