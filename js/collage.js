@@ -46,18 +46,21 @@ function computeContentGeometry(images, options) {
     h: img.naturalHeight || 1,
   }));
 
+  const layoutCells = layout.cells;
+  if (!layoutCells.length || layoutCells.length < images.length) return null;
+
   let unit = 0;
-  layout.cells.forEach((cell, i) => {
+  layoutCells.forEach((cell, i) => {
     const ref = refs[Math.min(i, refs.length - 1)];
     unit = Math.max(unit, ref.w / cell.w, ref.h / cell.h);
   });
 
-  const contentW = Math.max(...layout.cells.map((c) => (c.x + c.w) * unit));
-  const contentH = Math.max(...layout.cells.map((c) => (c.y + c.h) * unit));
+  const contentW = Math.max(...layoutCells.map((c) => (c.x + c.w) * unit));
+  const contentH = Math.max(...layoutCells.map((c) => (c.y + c.h) * unit));
   const totalW = contentW + gap;
   const totalH = contentH + gap;
 
-  const cells = layout.cells.map((cell, slotIndex) => {
+  const cells = layoutCells.map((cell, slotIndex) => {
     const insetL = cell.x > 0 ? gap / 2 : 0;
     const insetT = cell.y > 0 ? gap / 2 : 0;
     const insetR = cell.x + cell.w < 1 ? gap / 2 : 0;

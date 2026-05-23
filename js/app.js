@@ -1,4 +1,4 @@
-import { LAYOUTS, layoutsForCount } from './layouts.js';
+import { LAYOUTS, layoutsForCount, getLayoutCells } from './layouts.js';
 import { TARGETS, findTarget } from './targets.js';
 import {
   buildCollageCanvas,
@@ -11,7 +11,7 @@ import { initPreviewEditor } from './preview-editor.js';
 
 /** @type {ImageItem[]} */
 let images = [];
-let selectedLayoutId = 'row-2';
+let selectedLayoutId = 'grid-auto';
 let selectedTargetId = 'free';
 /** @type {HTMLCanvasElement | null} */
 let lastExportCanvas = null;
@@ -153,11 +153,13 @@ function renderTargetButtons() {
   });
 }
 
-function layoutPreviewSvg(layout) {
-  const rects = layout.cells
+function layoutPreviewSvg(layout, imageCount) {
+  const count = imageCount >= layout.minImages ? imageCount : layout.maxImages;
+  const cells = getLayoutCells(layout, count);
+  const rects = cells
     .map(
       (c) =>
-        `<rect x="${c.x * 88 + 4}" y="${c.y * 88 + 4}" width="${c.w * 88 - 2}" height="${c.h * 88 - 2}" rx="2" fill="currentColor"/>`
+        `<rect x="${c.x * 88 + 4}" y="${c.y * 88 + 4}" width="${Math.max(2, c.w * 88 - 2)}" height="${Math.max(2, c.h * 88 - 2)}" rx="1" fill="currentColor"/>`
     )
     .join('');
   return `<svg viewBox="0 0 96 96" aria-hidden="true" style="color:#9898b0">${rects}</svg>`;
@@ -168,7 +170,7 @@ function renderLayoutButtons() {
   const list = available.length > 0 ? available : LAYOUTS.filter((l) => l.minImages <= 2);
 
   if (!list.some((l) => l.id === selectedLayoutId)) {
-    selectedLayoutId = list[0]?.id ?? 'row-2';
+    selectedLayoutId = list.find((l) => l.id === 'grid-auto')?.id ?? list[0]?.id ?? 'grid-auto';
   }
 
   layoutGrid.innerHTML = '';
@@ -180,7 +182,7 @@ function renderLayoutButtons() {
     btn.setAttribute('aria-checked', String(layout.id === selectedLayoutId));
     btn.setAttribute('aria-label', layout.label);
     btn.title = layout.label;
-    btn.innerHTML = layoutPreviewSvg(layout);
+    btn.innerHTML = layoutPreviewSvg(layout, images.length);
     btn.addEventListener('click', () => {
       selectedLayoutId = layout.id;
       renderLayoutButtons();

@@ -4,7 +4,8 @@ Progressive Web App (PWA) zum Erstellen von Fotocollagen direkt im Smartphone-Br
 
 ## Funktionen
 
-- Mehrere Fotos aus der Galerie hinzufügen
+- Mehrere Fotos aus der Galerie hinzufügen (2–10 Bilder)
+- Raster-Layouts bis 10 Fotos (auto, 3×3, 5×2 u. a.)
 - **Zielformate**: Instagram, Story, Pinterest, Facebook, TikTok, A4 u. a.
 - In der Vorschau: Reihenfolge tauschen, Bild positionieren und zoomen
 - Verschiedene Collage-Layouts (2er, 3er, 4er, Raster, Highlight-Layouts)
