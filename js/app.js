@@ -29,6 +29,7 @@ const previewWrap = document.getElementById('preview-wrap');
 const previewStage = document.getElementById('preview-stage');
 const previewCanvas = document.getElementById('preview-canvas');
 const previewOverlay = document.getElementById('preview-overlay');
+const previewSlotBar = document.getElementById('preview-slot-bar');
 const previewPlaceholder = document.getElementById('preview-placeholder');
 const saveBtn = document.getElementById('save-btn');
 const shareBtn = document.getElementById('share-btn');
@@ -474,7 +475,7 @@ function registerServiceWorker() {
 }
 
 if (previewStage && previewCanvas && previewOverlay) {
-  previewEditor = initPreviewEditor(previewStage, previewCanvas, previewOverlay, {
+  previewEditor = initPreviewEditor(previewStage, previewCanvas, previewOverlay, previewSlotBar, {
     getGeometry: () => getGeometry(900),
     getTransform: (imageIndex) => images[imageIndex]?.transform ?? defaultTransform(),
     getPanLimits: (imageIndex, cellW, cellH) => {

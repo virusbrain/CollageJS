@@ -351,19 +351,9 @@ body {
   box-shadow: inset 0 0 0 1px rgba(108, 92, 231, 0.4);
 }
 
-.preview-cell--swap-target {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(0, 184, 148, 0.5);
-}
-
-.preview-cell--swap-pick .preview-cell-handle {
-  background: var(--accent);
-  transform: scale(1.1);
-}
-
-.preview-cell--dragging .preview-cell-handle {
-  transform: scale(1.12);
-  background: var(--accent);
+.preview-cell--swap-pick {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(108, 92, 231, 0.5);
 }
 
 .preview-cell--panning {

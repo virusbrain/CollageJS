@@ -1,7 +1,7 @@
 /**
- * Interaktive Vorschau – Tauschen per Touch, natürliches Verschieben & Zoomen.
+ * Interaktive Vorschau – Tauschen über Nummern-Leiste, Pan/Zoom in der Vorschau.
  */
-export function initPreviewEditor(stage, canvas, overlay, callbacks) {
+export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
   let selectedSlot = 0;
   /** @type {number | null} */
   let swapPickSlot = null;
@@ -14,36 +14,18 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   /** @type {{ imageIndex: number, startDist: number, startZoom: number } | null} */
   let pinch = null;
 
-  /** @type {{ slot: number, targetSlot: number, startX: number, startY: number, moved: boolean, cleanup?: () => void } | null} */
-  let touchSwap = null;
-
   let suppressPointerUntil = 0;
-
-  const preferTouch =
-    typeof window !== 'undefined' &&
-    (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0);
 
   function pct(value, total) {
     return `${(value / total) * 100}%`;
   }
 
-  function slotFromPoint(clientX, clientY) {
-    const elements = document.elementsFromPoint(clientX, clientY);
-    for (const el of elements) {
-      const cell = el.closest?.('.preview-cell');
-      if (cell && overlay.contains(cell)) {
-        return Number(/** @type {HTMLElement} */ (cell).dataset.slot);
-      }
-    }
-    return -1;
-  }
-
   function clearSwapHighlight() {
-    overlay.querySelectorAll('.preview-cell--swap-target').forEach((n) => {
-      n.classList.remove('preview-cell--swap-target');
-    });
     overlay.querySelectorAll('.preview-cell--swap-pick').forEach((n) => {
       n.classList.remove('preview-cell--swap-pick');
+    });
+    slotBar?.querySelectorAll('.preview-slot-chip').forEach((n) => {
+      n.classList.remove('preview-slot-chip--active');
     });
   }
 
@@ -52,18 +34,10 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     clearSwapHighlight();
     if (slot !== null) {
       overlay.querySelector(`[data-slot="${slot}"]`)?.classList.add('preview-cell--swap-pick');
+      slotBar?.querySelector(`[data-slot="${slot}"]`)?.classList.add('preview-slot-chip--active');
       callbacks.onSwapArm?.(slot);
     } else {
       callbacks.onSwapArm?.(null);
-    }
-  }
-
-  function highlightSwapTarget(targetSlot, fromSlot) {
-    overlay.querySelectorAll('.preview-cell--swap-target').forEach((n) => {
-      n.classList.remove('preview-cell--swap-target');
-    });
-    if (targetSlot >= 0 && targetSlot !== fromSlot) {
-      overlay.querySelector(`[data-slot="${targetSlot}"]`)?.classList.add('preview-cell--swap-target');
     }
   }
 
@@ -81,15 +55,6 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     callbacks.onSwapSlots(from, slot);
   }
 
-  /**
-   * Fingerbewegung 1:1 auf Bildversatz abbilden (Bild folgt dem Finger).
-   * @param {number} slot
-   * @param {number} imageIndex
-   * @param {number} dx Screen-Pixel
-   * @param {number} dy Screen-Pixel
-   * @param {number} startPanX
-   * @param {number} startPanY
-   */
   function applyPanDelta(slot, imageIndex, dx, dy, startPanX, startPanY) {
     const geometry = callbacks.getGeometry();
     const cell = geometry?.cells.find((c) => c.slotIndex === slot);
@@ -138,13 +103,11 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
   function movePan(clientX, clientY) {
     if (!panDrag) return;
-    const dx = clientX - panDrag.startX;
-    const dy = clientY - panDrag.startY;
     applyPanDelta(
       panDrag.slot,
       panDrag.imageIndex,
-      dx,
-      dy,
+      clientX - panDrag.startX,
+      clientY - panDrag.startY,
       panDrag.startPanX,
       panDrag.startPanY
     );
@@ -159,84 +122,12 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     callbacks.onInteractionEnd();
   }
 
-  function bindTouchSwapHandle(handle, slot, cellEl) {
-    const onTouchStart = (e) => {
-      if (e.touches.length !== 1) return;
-
-      suppressPointerUntil = Date.now() + 600;
-      e.preventDefault();
-      e.stopPropagation();
-
-      const t = e.touches[0];
-      touchSwap = {
-        slot,
-        targetSlot: -1,
-        startX: t.clientX,
-        startY: t.clientY,
-        moved: false,
-      };
-
-      cellEl.classList.add('preview-cell--dragging');
-
-      const onTouchMove = (ev) => {
-        if (!touchSwap || touchSwap.slot !== slot) return;
-        ev.preventDefault();
-
-        const touch = ev.touches[0];
-        if (!touch) return;
-
-        if (Math.hypot(touch.clientX - touchSwap.startX, touch.clientY - touchSwap.startY) > 10) {
-          touchSwap.moved = true;
-        }
-
-        const hovered = slotFromPoint(touch.clientX, touch.clientY);
-        touchSwap.targetSlot = hovered >= 0 && hovered !== slot ? hovered : -1;
-        highlightSwapTarget(touchSwap.targetSlot, slot);
-      };
-
-      const onTouchEnd = (ev) => {
-        if (!touchSwap || touchSwap.slot !== slot) return;
-        ev.preventDefault();
-        ev.stopPropagation();
-
-        cellEl.classList.remove('preview-cell--dragging');
-        document.removeEventListener('touchmove', onTouchMove);
-        document.removeEventListener('touchend', onTouchEnd);
-        document.removeEventListener('touchcancel', onTouchEnd);
-
-        if (!touchSwap.moved) {
-          tryTapSwap(slot);
-        } else if (touchSwap.targetSlot >= 0) {
-          setSwapPick(null);
-          callbacks.onSwapSlots(slot, touchSwap.targetSlot);
-        }
-
-        clearSwapHighlight();
-        touchSwap = null;
-      };
-
-      touchSwap.cleanup = () => {
-        document.removeEventListener('touchmove', onTouchMove);
-        document.removeEventListener('touchend', onTouchEnd);
-        document.removeEventListener('touchcancel', onTouchEnd);
-        cellEl.classList.remove('preview-cell--dragging');
-      };
-
-      document.addEventListener('touchmove', onTouchMove, { passive: false });
-      document.addEventListener('touchend', onTouchEnd, { passive: false });
-      document.addEventListener('touchcancel', onTouchEnd, { passive: false });
-    };
-
-    handle.addEventListener('touchstart', onTouchStart, { passive: false });
-  }
-
   function bindTouchPanCell(cellEl, slot, imageIndex) {
     const onTouchStart = (e) => {
       if (e.touches.length !== 1) return;
-      if (e.target.closest('.preview-cell-handle')) return;
       if (swapPickSlot !== null) return;
 
-      suppressPointerUntil = Date.now() + 600;
+      suppressPointerUntil = Date.now() + 400;
       e.preventDefault();
 
       const t = e.touches[0];
@@ -266,25 +157,46 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     cellEl.addEventListener('touchstart', onTouchStart, { passive: false });
   }
 
-  function bindTouchSwapCell(cellEl, slot) {
-    cellEl.addEventListener(
-      'touchend',
-      (e) => {
-        if (swapPickSlot === null || swapPickSlot === slot) return;
-        if (e.target.closest('.preview-cell-handle')) return;
+  function renderSlotBar(geometry) {
+    if (!slotBar) return;
 
-        suppressPointerUntil = Date.now() + 600;
-        e.preventDefault();
-        tryTapSwap(slot);
-      },
-      { passive: false }
-    );
+    if (!geometry) {
+      slotBar.hidden = true;
+      slotBar.innerHTML = '';
+      return;
+    }
+
+    slotBar.hidden = false;
+    slotBar.innerHTML = '';
+
+    geometry.cells.forEach((cell) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'preview-slot-chip';
+      chip.dataset.slot = String(cell.slotIndex);
+      chip.setAttribute('aria-label', `Position ${cell.slotIndex + 1} zum Tauschen wählen`);
+      chip.textContent = String(cell.slotIndex + 1);
+
+      if (cell.slotIndex === swapPickSlot) {
+        chip.classList.add('preview-slot-chip--active');
+      }
+
+      chip.addEventListener('click', () => {
+        tryTapSwap(cell.slotIndex);
+      });
+
+      slotBar.appendChild(chip);
+    });
   }
 
   function renderOverlays() {
     const geometry = callbacks.getGeometry();
     overlay.innerHTML = '';
-    if (!geometry) return;
+
+    if (!geometry) {
+      renderSlotBar(null);
+      return;
+    }
 
     const { width, height, cells } = geometry;
 
@@ -300,25 +212,16 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       el.style.width = pct(cell.w, width);
       el.style.height = pct(cell.h, height);
 
-      const handle = document.createElement('div');
-      handle.className = 'preview-cell-handle';
-      handle.setAttribute('role', 'button');
-      handle.setAttribute('aria-label', `Position ${cell.slotIndex + 1} tauschen`);
-      handle.textContent = String(cell.slotIndex + 1);
-
-      el.appendChild(handle);
       overlay.appendChild(el);
-
-      bindTouchSwapHandle(handle, cell.slotIndex, el);
-      bindTouchSwapCell(el, cell.slotIndex);
       bindTouchPanCell(el, cell.slotIndex, cell.imageIndex);
     });
+
+    renderSlotBar(geometry);
   }
 
   overlay.addEventListener('pointerdown', (e) => {
     if (Date.now() < suppressPointerUntil) return;
 
-    const handle = /** @type {HTMLElement} */ (e.target).closest('.preview-cell-handle');
     const cellEl = /** @type {HTMLElement} */ (e.target).closest('.preview-cell');
     if (!cellEl) return;
 
@@ -335,54 +238,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       });
     }
 
-    if (handle) {
-      if (preferTouch) return;
-
-      e.preventDefault();
-      handle.setPointerCapture(e.pointerId);
-
-      let targetSlot = -1;
-      let moved = false;
-      const startX = e.clientX;
-      const startY = e.clientY;
-
-      cellEl.classList.add('preview-cell--dragging');
-
-      const onMove = (ev) => {
-        if (ev.pointerId !== e.pointerId) return;
-        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) moved = true;
-        const hovered = slotFromPoint(ev.clientX, ev.clientY);
-        targetSlot = hovered >= 0 && hovered !== slot ? hovered : -1;
-        highlightSwapTarget(targetSlot, slot);
-      };
-
-      const onUp = (ev) => {
-        if (ev.pointerId !== e.pointerId) return;
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
-        document.removeEventListener('pointercancel', onUp);
-        cellEl.classList.remove('preview-cell--dragging');
-        clearSwapHighlight();
-
-        if (!moved) tryTapSwap(slot);
-        else if (targetSlot >= 0) {
-          setSwapPick(null);
-          callbacks.onSwapSlots(slot, targetSlot);
-        }
-      };
-
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
-      document.addEventListener('pointercancel', onUp);
-      return;
-    }
-
-    if (swapPickSlot !== null && !preferTouch) {
-      tryTapSwap(slot);
-      return;
-    }
-
-    if (preferTouch) return;
+    if (swapPickSlot !== null) return;
 
     pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinchPointers.size === 2) {
@@ -452,8 +308,6 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
   return {
     update() {
-      if (touchSwap?.cleanup) touchSwap.cleanup();
-      touchSwap = null;
       endPan();
       renderOverlays();
     },
