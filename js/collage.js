@@ -14,6 +14,25 @@ const EXPORT_MAX = 2400;
  * @param {CanvasRenderingContext2D} ctx
  * @param {ImageTransform} [transform]
  */
+/**
+ * @param {HTMLImageElement} img
+ * @param {number} cellW
+ * @param {number} cellH
+ * @param {{ panX?: number, panY?: number, zoom?: number }} transform
+ */
+export function computePanLimits(img, cellW, cellH, transform = { panX: 0, panY: 0, zoom: 1 }) {
+  const zoom = Math.max(1, Math.min(3, transform.zoom || 1));
+  const baseScale = Math.max(cellW / img.naturalWidth, cellH / img.naturalHeight);
+  const scale = baseScale * zoom;
+  const sw = img.naturalWidth * scale;
+  const sh = img.naturalHeight * scale;
+
+  return {
+    maxPanX: Math.max(0, (sw - cellW) / 2),
+    maxPanY: Math.max(0, (sh - cellH) / 2),
+  };
+}
+
 export function drawCoverWithTransform(img, x, y, w, h, ctx, transform = { panX: 0, panY: 0, zoom: 1 }) {
   const zoom = Math.max(1, Math.min(3, transform.zoom || 1));
   const baseScale = Math.max(w / img.naturalWidth, h / img.naturalHeight);

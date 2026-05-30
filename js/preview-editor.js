@@ -1,26 +1,25 @@
 /**
- * Interaktive Vorschau – iOS-taugliches Tauschen per Touch, Pan/Zoom per Pointer.
+ * Interaktive Vorschau – Tauschen per Touch, natürliches Verschieben & Zoomen.
  */
 export function initPreviewEditor(stage, canvas, overlay, callbacks) {
   let selectedSlot = 0;
   /** @type {number | null} */
   let swapPickSlot = null;
 
-  /** @type {{ mode: 'pan', slot: number, imageIndex: number, pointerId: number, startX: number, startY: number, startPanX: number, startPanY: number } | null} */
-  let drag = null;
+  /** @type {{ slot: number, imageIndex: number, pointerId?: number, startX: number, startY: number, startPanX: number, startPanY: number } | null} */
+  let panDrag = null;
 
   /** @type {Map<number, { x: number, y: number }>} */
   let pinchPointers = new Map();
   /** @type {{ imageIndex: number, startDist: number, startZoom: number } | null} */
   let pinch = null;
 
-  /** @type {{ slot: number, targetSlot: number, startX: number, startY: number, moved: boolean } | null} */
+  /** @type {{ slot: number, targetSlot: number, startX: number, startY: number, moved: boolean, cleanup?: () => void } | null} */
   let touchSwap = null;
 
-  /** Letzter Touch-Zeitstempel – verhindert doppelte Pointer-Events auf iOS */
   let suppressPointerUntil = 0;
 
-  const preferTouchSwap =
+  const preferTouch =
     typeof window !== 'undefined' &&
     (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0);
 
@@ -82,17 +81,84 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     callbacks.onSwapSlots(from, slot);
   }
 
-  function removeTouchSwapListeners() {
-    if (!touchSwap?.cleanup) return;
-    touchSwap.cleanup();
-    touchSwap = null;
+  /**
+   * Fingerbewegung 1:1 auf Bildversatz abbilden (Bild folgt dem Finger).
+   * @param {number} slot
+   * @param {number} imageIndex
+   * @param {number} dx Screen-Pixel
+   * @param {number} dy Screen-Pixel
+   * @param {number} startPanX
+   * @param {number} startPanY
+   */
+  function applyPanDelta(slot, imageIndex, dx, dy, startPanX, startPanY) {
+    const geometry = callbacks.getGeometry();
+    const cell = geometry?.cells.find((c) => c.slotIndex === slot);
+    if (!cell || !geometry) return;
+
+    const limits = callbacks.getPanLimits(imageIndex, cell.w, cell.h);
+    const rect = stage.getBoundingClientRect();
+    const cellScreenW = (cell.w / geometry.width) * rect.width;
+    const cellScreenH = (cell.h / geometry.height) * rect.height;
+    if (cellScreenW < 1 || cellScreenH < 1) return;
+
+    const scaleX = cell.w / cellScreenW;
+    const scaleY = cell.h / cellScreenH;
+    const deltaCanvasX = dx * scaleX;
+    const deltaCanvasY = dy * scaleY;
+
+    const startOffsetX = startPanX * limits.maxPanX;
+    const startOffsetY = startPanY * limits.maxPanY;
+    const newOffsetX = clamp(startOffsetX + deltaCanvasX, -limits.maxPanX, limits.maxPanX);
+    const newOffsetY = clamp(startOffsetY + deltaCanvasY, -limits.maxPanY, limits.maxPanY);
+
+    const current = callbacks.getTransform(imageIndex);
+    callbacks.onTransform(imageIndex, {
+      ...current,
+      panX: limits.maxPanX > 0 ? newOffsetX / limits.maxPanX : 0,
+      panY: limits.maxPanY > 0 ? newOffsetY / limits.maxPanY : 0,
+    });
   }
 
-  /**
-   * @param {HTMLElement} handle
-   * @param {number} slot
-   * @param {HTMLElement} cellEl
-   */
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function startPan(slot, imageIndex, clientX, clientY) {
+    const t = callbacks.getTransform(imageIndex);
+    panDrag = {
+      slot,
+      imageIndex,
+      startX: clientX,
+      startY: clientY,
+      startPanX: t.panX,
+      startPanY: t.panY,
+    };
+    overlay.querySelector(`[data-slot="${slot}"]`)?.classList.add('preview-cell--panning');
+  }
+
+  function movePan(clientX, clientY) {
+    if (!panDrag) return;
+    const dx = clientX - panDrag.startX;
+    const dy = clientY - panDrag.startY;
+    applyPanDelta(
+      panDrag.slot,
+      panDrag.imageIndex,
+      dx,
+      dy,
+      panDrag.startPanX,
+      panDrag.startPanY
+    );
+  }
+
+  function endPan() {
+    if (!panDrag) return;
+    overlay.querySelectorAll('.preview-cell--panning').forEach((n) => {
+      n.classList.remove('preview-cell--panning');
+    });
+    panDrag = null;
+    callbacks.onInteractionEnd();
+  }
+
   function bindTouchSwapHandle(handle, slot, cellEl) {
     const onTouchStart = (e) => {
       if (e.touches.length !== 1) return;
@@ -108,7 +174,6 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
         startX: t.clientX,
         startY: t.clientY,
         moved: false,
-        cleanup: null,
       };
 
       cellEl.classList.add('preview-cell--dragging');
@@ -120,8 +185,9 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
         const touch = ev.touches[0];
         if (!touch) return;
 
-        const dist = Math.hypot(touch.clientX - touchSwap.startX, touch.clientY - touchSwap.startY);
-        if (dist > 10) touchSwap.moved = true;
+        if (Math.hypot(touch.clientX - touchSwap.startX, touch.clientY - touchSwap.startY) > 10) {
+          touchSwap.moved = true;
+        }
 
         const hovered = slotFromPoint(touch.clientX, touch.clientY);
         touchSwap.targetSlot = hovered >= 0 && hovered !== slot ? hovered : -1;
@@ -132,12 +198,6 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
         if (!touchSwap || touchSwap.slot !== slot) return;
         ev.preventDefault();
         ev.stopPropagation();
-
-        const touch = ev.changedTouches[0];
-        if (touch && !touchSwap.moved) {
-          const dist = Math.hypot(touch.clientX - touchSwap.startX, touch.clientY - touchSwap.startY);
-          if (dist > 14) touchSwap.moved = true;
-        }
 
         cellEl.classList.remove('preview-cell--dragging');
         document.removeEventListener('touchmove', onTouchMove);
@@ -170,10 +230,42 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     handle.addEventListener('touchstart', onTouchStart, { passive: false });
   }
 
-  /**
-   * @param {HTMLElement} cellEl
-   * @param {number} slot
-   */
+  function bindTouchPanCell(cellEl, slot, imageIndex) {
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
+      if (e.target.closest('.preview-cell-handle')) return;
+      if (swapPickSlot !== null) return;
+
+      suppressPointerUntil = Date.now() + 600;
+      e.preventDefault();
+
+      const t = e.touches[0];
+      startPan(slot, imageIndex, t.clientX, t.clientY);
+
+      const onTouchMove = (ev) => {
+        if (!panDrag || panDrag.slot !== slot) return;
+        ev.preventDefault();
+        const touch = ev.touches[0];
+        if (touch) movePan(touch.clientX, touch.clientY);
+      };
+
+      const onTouchEnd = (ev) => {
+        if (!panDrag || panDrag.slot !== slot) return;
+        ev.preventDefault();
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+        document.removeEventListener('touchcancel', onTouchEnd);
+        endPan();
+      };
+
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('touchend', onTouchEnd, { passive: false });
+      document.addEventListener('touchcancel', onTouchEnd, { passive: false });
+    };
+
+    cellEl.addEventListener('touchstart', onTouchStart, { passive: false });
+  }
+
   function bindTouchSwapCell(cellEl, slot) {
     cellEl.addEventListener(
       'touchend',
@@ -219,6 +311,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
       bindTouchSwapHandle(handle, cell.slotIndex, el);
       bindTouchSwapCell(el, cell.slotIndex);
+      bindTouchPanCell(el, cell.slotIndex, cell.imageIndex);
     });
   }
 
@@ -243,7 +336,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
     }
 
     if (handle) {
-      if (preferTouchSwap) return;
+      if (preferTouch) return;
 
       e.preventDefault();
       handle.setPointerCapture(e.pointerId);
@@ -257,8 +350,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
       const onMove = (ev) => {
         if (ev.pointerId !== e.pointerId) return;
-        const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
-        if (dist > 8) moved = true;
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) moved = true;
         const hovered = slotFromPoint(ev.clientX, ev.clientY);
         targetSlot = hovered >= 0 && hovered !== slot ? hovered : -1;
         highlightSwapTarget(targetSlot, slot);
@@ -285,10 +377,12 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       return;
     }
 
-    if (swapPickSlot !== null && !preferTouchSwap) {
+    if (swapPickSlot !== null && !preferTouch) {
       tryTapSwap(slot);
       return;
     }
+
+    if (preferTouch) return;
 
     pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinchPointers.size === 2) {
@@ -300,19 +394,10 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
     if (pinchPointers.size > 2) return;
 
-    const t = callbacks.getTransform(imageIndex);
     e.preventDefault();
     cellEl.setPointerCapture(e.pointerId);
-    drag = {
-      mode: 'pan',
-      slot,
-      imageIndex,
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      startPanX: t.panX,
-      startPanY: t.panY,
-    };
+    startPan(slot, imageIndex, e.clientX, e.clientY);
+    panDrag.pointerId = e.pointerId;
   });
 
   overlay.addEventListener('pointermove', (e) => {
@@ -332,43 +417,20 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
       return;
     }
 
-    if (!drag || drag.mode !== 'pan' || e.pointerId !== drag.pointerId) return;
-
-    const geometry = callbacks.getGeometry();
-    const cell = geometry?.cells.find((c) => c.slotIndex === drag.slot);
-    if (!cell || !geometry) return;
-
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
-    const rect = stage.getBoundingClientRect();
-    const cellScreenW = (cell.w / geometry.width) * rect.width;
-    const cellScreenH = (cell.h / geometry.height) * rect.height;
-
-    const panX = drag.startPanX - (dx / cellScreenW) * 2;
-    const panY = drag.startPanY - (dy / cellScreenH) * 2;
-    const current = callbacks.getTransform(drag.imageIndex);
-
-    callbacks.onTransform(drag.imageIndex, {
-      ...current,
-      panX: Math.max(-1, Math.min(1, panX)),
-      panY: Math.max(-1, Math.min(1, panY)),
-    });
+    if (!panDrag || panDrag.pointerId !== e.pointerId) return;
+    movePan(e.clientX, e.clientY);
   });
 
-  function endPan(e) {
-    if (Date.now() < suppressPointerUntil) return;
-
+  function endPointer(e) {
     pinchPointers.delete(e.pointerId);
     if (pinchPointers.size < 2) pinch = null;
 
-    if (!drag || drag.mode !== 'pan' || e.pointerId !== drag.pointerId) return;
-
-    callbacks.onInteractionEnd();
-    drag = null;
+    if (!panDrag || panDrag.pointerId !== e.pointerId) return;
+    endPan();
   }
 
-  overlay.addEventListener('pointerup', endPan);
-  overlay.addEventListener('pointercancel', endPan);
+  overlay.addEventListener('pointerup', endPointer);
+  overlay.addEventListener('pointercancel', endPointer);
 
   overlay.addEventListener(
     'wheel',
@@ -379,7 +441,7 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
       const imageIndex = Number(cellEl.dataset.imageIndex);
       const current = callbacks.getTransform(imageIndex);
-      const delta = e.deltaY > 0 ? -0.08 : 0.08;
+      const delta = e.deltaY > 0 ? -0.05 : 0.05;
       const zoom = Math.max(1, Math.min(3, current.zoom + delta));
 
       callbacks.onTransform(imageIndex, { ...current, zoom });
@@ -390,7 +452,9 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
   return {
     update() {
-      removeTouchSwapListeners();
+      if (touchSwap?.cleanup) touchSwap.cleanup();
+      touchSwap = null;
+      endPan();
       renderOverlays();
     },
     cancelSwapPick() {

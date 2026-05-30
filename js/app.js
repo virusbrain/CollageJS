@@ -3,6 +3,7 @@ import { TARGETS, findTarget } from './targets.js';
 import {
   buildCollageCanvas,
   computeCollageGeometry,
+  computePanLimits,
   upscaleForExport,
 } from './collage.js';
 import { initPreviewEditor } from './preview-editor.js';
@@ -476,6 +477,11 @@ if (previewStage && previewCanvas && previewOverlay) {
   previewEditor = initPreviewEditor(previewStage, previewCanvas, previewOverlay, {
     getGeometry: () => getGeometry(900),
     getTransform: (imageIndex) => images[imageIndex]?.transform ?? defaultTransform(),
+    getPanLimits: (imageIndex, cellW, cellH) => {
+      const item = images[imageIndex];
+      if (!item?.image?.naturalWidth) return { maxPanX: 0, maxPanY: 0 };
+      return computePanLimits(item.image, cellW, cellH, item.transform);
+    },
     onSwapSlots: swapSlots,
     onSwapArm: (slot) => {
       if (slot === null) {

@@ -366,6 +366,19 @@ body {
   background: var(--accent);
 }
 
+.preview-cell--panning {
+  cursor: grabbing;
+}
+
+.preview-cell--panning::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(108, 92, 231, 0.08);
+  pointer-events: none;
+  border-radius: 2px;
+}
+
 .preview-cell-handle {
   position: absolute;
   top: 4px;
