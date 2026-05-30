@@ -108,8 +108,8 @@ export function initPreviewEditor(stage, canvas, overlay, callbacks) {
 
     const startOffsetX = startPanX * limits.maxPanX;
     const startOffsetY = startPanY * limits.maxPanY;
-    const newOffsetX = clamp(startOffsetX + deltaCanvasX, -limits.maxPanX, limits.maxPanX);
-    const newOffsetY = clamp(startOffsetY + deltaCanvasY, -limits.maxPanY, limits.maxPanY);
+    const newOffsetX = clamp(startOffsetX - deltaCanvasX, -limits.maxPanX, limits.maxPanX);
+    const newOffsetY = clamp(startOffsetY - deltaCanvasY, -limits.maxPanY, limits.maxPanY);
 
     const current = callbacks.getTransform(imageIndex);
     callbacks.onTransform(imageIndex, {

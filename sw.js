@@ -1,4 +1,4 @@
-const CACHE = 'collagejs-v11';
+const CACHE = 'collagejs-v12';
 
 const ASSETS = [
   './',
