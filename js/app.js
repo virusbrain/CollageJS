@@ -17,6 +17,7 @@ let selectedTargetId = 'free';
 /** @type {HTMLCanvasElement | null} */
 let lastExportCanvas = null;
 let previewRetryTimer = 0;
+let previewPaintRaf = 0;
 
 const fileInput = document.getElementById('file-input');
 const imageList = document.getElementById('image-list');
@@ -494,10 +495,20 @@ if (previewStage && previewCanvas && previewOverlay) {
     onTransform: (imageIndex, transform) => {
       if (!images[imageIndex]) return;
       images[imageIndex].transform = transform;
-      const canvas = drawPreviewCanvas();
-      if (canvas) paintPreviewCanvas(canvas);
+      if (previewPaintRaf) cancelAnimationFrame(previewPaintRaf);
+      previewPaintRaf = requestAnimationFrame(() => {
+        previewPaintRaf = 0;
+        const canvas = drawPreviewCanvas();
+        if (canvas) paintPreviewCanvas(canvas);
+      });
     },
     onInteractionEnd: () => {
+      if (previewPaintRaf) {
+        cancelAnimationFrame(previewPaintRaf);
+        previewPaintRaf = 0;
+      }
+      const canvas = drawPreviewCanvas();
+      if (canvas) paintPreviewCanvas(canvas);
       lastExportCanvas = buildCollageCanvas(
         images.map((i) => i.image),
         getExportOptions(),

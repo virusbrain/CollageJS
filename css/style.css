@@ -425,6 +425,7 @@ body {
   line-height: 0;
   overflow: hidden;
   border-radius: var(--radius);
+  touch-action: none;
 }
 
 #preview-canvas {

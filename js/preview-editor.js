@@ -14,6 +14,9 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
   /** @type {{ imageIndex: number, startDist: number, startZoom: number } | null} */
   let pinch = null;
 
+  /** @type {{ imageIndex: number, startDist: number, startZoom: number } | null} */
+  let touchPinch = null;
+
   let suppressPointerUntil = 0;
 
   function pct(value, total) {
@@ -88,6 +91,31 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
     return Math.max(min, Math.min(max, value));
   }
 
+  function touchDistance(touches) {
+    const a = touches[0];
+    const b = touches[1];
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  function zoomFromPinchRatio(startZoom, ratio) {
+    const gain = 1.15;
+    const scaled = 1 + (ratio - 1) * gain;
+    return clamp(startZoom * scaled, 1, 3);
+  }
+
+  function applyPinchZoom(imageIndex, startDist, startZoom, currentDist) {
+    if (startDist < 8) return;
+    const ratio = currentDist / startDist;
+    const zoom = zoomFromPinchRatio(startZoom, ratio);
+    const current = callbacks.getTransform(imageIndex);
+    callbacks.onTransform(imageIndex, { ...current, zoom });
+  }
+
+  function cellFromTouch(touch) {
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    return /** @type {HTMLElement | null} */ (el?.closest?.('.preview-cell') ?? null);
+  }
+
   function startPan(slot, imageIndex, clientX, clientY) {
     const t = callbacks.getTransform(imageIndex);
     panDrag = {
@@ -122,39 +150,101 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
     callbacks.onInteractionEnd();
   }
 
-  function bindTouchPanCell(cellEl, slot, imageIndex) {
+  function endPinch() {
+    if (!pinch && !touchPinch) return;
+    pinch = null;
+    touchPinch = null;
+    callbacks.onInteractionEnd();
+  }
+
+  function bindOverlayTouch() {
     const onTouchStart = (e) => {
-      if (e.touches.length !== 1) return;
       if (swapPickSlot !== null) return;
 
-      suppressPointerUntil = Date.now() + 400;
+      if (e.touches.length >= 2) {
+        e.preventDefault();
+        panDrag = null;
+        overlay.querySelectorAll('.preview-cell--panning').forEach((n) => {
+          n.classList.remove('preview-cell--panning');
+        });
+
+        const cellEl =
+          cellFromTouch(e.touches[0]) || cellFromTouch(e.touches[1]);
+        if (!cellEl) return;
+
+        const imageIndex = Number(cellEl.dataset.imageIndex);
+        const dist = touchDistance(e.touches);
+        touchPinch = {
+          imageIndex,
+          startDist: dist,
+          startZoom: callbacks.getTransform(imageIndex).zoom,
+        };
+        return;
+      }
+
+      if (e.touches.length !== 1) return;
+
+      const cellEl = /** @type {HTMLElement} */ (e.target).closest('.preview-cell');
+      if (!cellEl) return;
+
+      suppressPointerUntil = Date.now() + 120;
       e.preventDefault();
 
+      const slot = Number(cellEl.dataset.slot);
+      const imageIndex = Number(cellEl.dataset.imageIndex);
       const t = e.touches[0];
       startPan(slot, imageIndex, t.clientX, t.clientY);
-
-      const onTouchMove = (ev) => {
-        if (!panDrag || panDrag.slot !== slot) return;
-        ev.preventDefault();
-        const touch = ev.touches[0];
-        if (touch) movePan(touch.clientX, touch.clientY);
-      };
-
-      const onTouchEnd = (ev) => {
-        if (!panDrag || panDrag.slot !== slot) return;
-        ev.preventDefault();
-        document.removeEventListener('touchmove', onTouchMove);
-        document.removeEventListener('touchend', onTouchEnd);
-        document.removeEventListener('touchcancel', onTouchEnd);
-        endPan();
-      };
-
-      document.addEventListener('touchmove', onTouchMove, { passive: false });
-      document.addEventListener('touchend', onTouchEnd, { passive: false });
-      document.addEventListener('touchcancel', onTouchEnd, { passive: false });
     };
 
-    cellEl.addEventListener('touchstart', onTouchStart, { passive: false });
+    const onTouchMove = (e) => {
+      if (swapPickSlot !== null) return;
+
+      if (touchPinch && e.touches.length >= 2) {
+        e.preventDefault();
+        applyPinchZoom(
+          touchPinch.imageIndex,
+          touchPinch.startDist,
+          touchPinch.startZoom,
+          touchDistance(e.touches)
+        );
+        return;
+      }
+
+      if (e.touches.length >= 2 && !touchPinch) {
+        e.preventDefault();
+        const cellEl =
+          cellFromTouch(e.touches[0]) || cellFromTouch(e.touches[1]);
+        if (!cellEl) return;
+        const imageIndex = Number(cellEl.dataset.imageIndex);
+        const dist = touchDistance(e.touches);
+        touchPinch = {
+          imageIndex,
+          startDist: dist,
+          startZoom: callbacks.getTransform(imageIndex).zoom,
+        };
+        panDrag = null;
+        return;
+      }
+
+      if (!panDrag || e.touches.length !== 1) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      movePan(touch.clientX, touch.clientY);
+    };
+
+    const onTouchEnd = (e) => {
+      if (touchPinch && e.touches.length < 2) {
+        endPinch();
+      }
+      if (panDrag && e.touches.length === 0) {
+        endPan();
+      }
+    };
+
+    overlay.addEventListener('touchstart', onTouchStart, { passive: false });
+    overlay.addEventListener('touchmove', onTouchMove, { passive: false });
+    overlay.addEventListener('touchend', onTouchEnd, { passive: false });
+    overlay.addEventListener('touchcancel', onTouchEnd, { passive: false });
   }
 
   function renderSlotBar(geometry) {
@@ -213,14 +303,16 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
       el.style.height = pct(cell.h, height);
 
       overlay.appendChild(el);
-      bindTouchPanCell(el, cell.slotIndex, cell.imageIndex);
     });
 
     renderSlotBar(geometry);
   }
 
+  bindOverlayTouch();
+
   overlay.addEventListener('pointerdown', (e) => {
     if (Date.now() < suppressPointerUntil) return;
+    if (touchPinch) return;
 
     const cellEl = /** @type {HTMLElement} */ (e.target).closest('.preview-cell');
     if (!cellEl) return;
@@ -245,6 +337,7 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
       const pts = [...pinchPointers.values()];
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
       pinch = { imageIndex, startDist: dist, startZoom: callbacks.getTransform(imageIndex).zoom };
+      panDrag = null;
       return;
     }
 
@@ -266,10 +359,7 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
     if (pinch && pinchPointers.size >= 2) {
       const pts = [...pinchPointers.values()];
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const zoom = Math.max(1, Math.min(3, pinch.startZoom * (dist / pinch.startDist)));
-      const current = callbacks.getTransform(pinch.imageIndex);
-      callbacks.onTransform(pinch.imageIndex, { ...current, zoom });
-      callbacks.onInteractionEnd();
+      applyPinchZoom(pinch.imageIndex, pinch.startDist, pinch.startZoom, dist);
       return;
     }
 
@@ -279,9 +369,17 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
 
   function endPointer(e) {
     pinchPointers.delete(e.pointerId);
-    if (pinchPointers.size < 2) pinch = null;
+    if (pinch && pinchPointers.size < 2) {
+      pinch = null;
+      callbacks.onInteractionEnd();
+    }
 
     if (!panDrag || panDrag.pointerId !== e.pointerId) return;
+    try {
+      overlay.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
     endPan();
   }
 
@@ -297,7 +395,7 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
 
       const imageIndex = Number(cellEl.dataset.imageIndex);
       const current = callbacks.getTransform(imageIndex);
-      const delta = e.deltaY > 0 ? -0.05 : 0.05;
+      const delta = e.deltaY > 0 ? -0.08 : 0.08;
       const zoom = Math.max(1, Math.min(3, current.zoom + delta));
 
       callbacks.onTransform(imageIndex, { ...current, zoom });
@@ -309,6 +407,7 @@ export function initPreviewEditor(stage, canvas, overlay, slotBar, callbacks) {
   return {
     update() {
       endPan();
+      endPinch();
       renderOverlays();
     },
     cancelSwapPick() {
