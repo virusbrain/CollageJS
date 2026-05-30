@@ -3,34 +3,70 @@
 /** @typedef {{ id: string, label: string, minImages: number, maxImages: number, cells?: CellDef[], getCells?: (count: number) => CellDef[] }} LayoutDef */
 
 /**
+ * Raster, das die volle Fläche (0–1 × 0–1) immer ausfüllt.
+ * Unvollständige Zeilen: Zellen werden in der Breite gestreckt.
  * @param {number} cols
  * @param {number} rows
  * @param {number} count
  * @returns {CellDef[]}
  */
-export function uniformGrid(cols, rows, count) {
+export function tileGrid(cols, rows, count) {
   const cells = [];
-  for (let i = 0; i < count; i++) {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    cells.push({
-      x: col / cols,
-      y: row / rows,
-      w: 1 / cols,
-      h: 1 / rows,
-    });
+  const rowH = 1 / rows;
+
+  for (let row = 0; row < rows; row++) {
+    const firstIndex = row * cols;
+    if (firstIndex >= count) break;
+
+    const lastIndex = Math.min(firstIndex + cols, count);
+    const cellsInRow = lastIndex - firstIndex;
+    const cellW = 1 / cellsInRow;
+    const y = row * rowH;
+
+    for (let i = firstIndex; i < lastIndex; i++) {
+      const colInRow = i - firstIndex;
+      cells.push({
+        x: colInRow * cellW,
+        y,
+        w: cellW,
+        h: rowH,
+      });
+    }
   }
+
   return cells;
 }
 
+/** @deprecated Alias – nutzt tileGrid */
+export function uniformGrid(cols, rows, count) {
+  return tileGrid(cols, rows, count);
+}
+
 /**
+ * Optimales Raster für die Bildanzahl, Fläche immer voll genutzt.
  * @param {number} count
  * @returns {CellDef[]}
  */
 export function autoGrid(count) {
-  const cols = Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(count / cols);
-  return uniformGrid(cols, rows, count);
+  let bestCols = 1;
+  let bestRows = count;
+  let bestScore = Infinity;
+
+  for (let cols = 1; cols <= count; cols++) {
+    const rows = Math.ceil(count / cols);
+    const emptySlots = cols * rows - count;
+    const aspect = cols / rows;
+    const aspectPenalty = Math.abs(Math.log(aspect));
+    const score = emptySlots * 2 + aspectPenalty;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestCols = cols;
+      bestRows = rows;
+    }
+  }
+
+  return tileGrid(bestCols, bestRows, count);
 }
 
 /**
@@ -60,32 +96,32 @@ export const LAYOUTS = [
     label: '2 nebeneinander',
     minImages: 2,
     maxImages: 2,
-    cells: uniformGrid(2, 1, 2),
+    cells: tileGrid(2, 1, 2),
   },
   {
     id: 'col-2',
     label: '2 untereinander',
     minImages: 2,
     maxImages: 2,
-    cells: uniformGrid(1, 2, 2),
+    cells: tileGrid(1, 2, 2),
   },
 
-  gridLayout('grid-row-3', '3 nebeneinander', 3, 3, () => uniformGrid(3, 1, 3)),
-  gridLayout('grid-col-3', '3 untereinander', 3, 3, () => uniformGrid(1, 3, 3)),
+  gridLayout('grid-row-3', '3 nebeneinander', 3, 3, () => tileGrid(3, 1, 3)),
+  gridLayout('grid-col-3', '3 untereinander', 3, 3, () => tileGrid(1, 3, 3)),
 
   {
     id: 'row-3',
     label: '3 nebeneinander',
     minImages: 3,
     maxImages: 3,
-    cells: uniformGrid(3, 1, 3),
+    cells: tileGrid(3, 1, 3),
   },
   {
     id: 'col-3',
     label: '3 untereinander',
     minImages: 3,
     maxImages: 3,
-    cells: uniformGrid(1, 3, 3),
+    cells: tileGrid(1, 3, 3),
   },
   {
     id: 'big-left',
@@ -126,20 +162,20 @@ export const LAYOUTS = [
     label: '2×2 Raster',
     minImages: 4,
     maxImages: 4,
-    cells: uniformGrid(2, 2, 4),
+    cells: tileGrid(2, 2, 4),
   },
-  gridLayout('grid-row-4', '4 nebeneinander', 4, 4, () => uniformGrid(4, 1, 4)),
-  gridLayout('grid-col-4', '4 untereinander', 4, 4, () => uniformGrid(1, 4, 4)),
+  gridLayout('grid-row-4', '4 nebeneinander', 4, 4, () => tileGrid(4, 1, 4)),
+  gridLayout('grid-col-4', '4 untereinander', 4, 4, () => tileGrid(1, 4, 4)),
   {
     id: 'row-4',
     label: '4 nebeneinander',
     minImages: 4,
     maxImages: 4,
-    cells: uniformGrid(4, 1, 4),
+    cells: tileGrid(4, 1, 4),
   },
 
-  gridLayout('grid-row-5', '5 nebeneinander', 5, 5, () => uniformGrid(5, 1, 5)),
-  gridLayout('grid-col-5', '5 untereinander', 5, 5, () => uniformGrid(1, 5, 5)),
+  gridLayout('grid-row-5', '5 nebeneinander', 5, 5, () => tileGrid(5, 1, 5)),
+  gridLayout('grid-col-5', '5 untereinander', 5, 5, () => tileGrid(1, 5, 5)),
   {
     id: 'grid-2-3',
     label: '2 oben, 3 unten',
@@ -154,10 +190,10 @@ export const LAYOUTS = [
     ],
   },
 
-  gridLayout('grid-3x2', '3×2 Raster', 6, 6, () => uniformGrid(3, 2, 6)),
-  gridLayout('grid-2x3', '2×3 Raster', 6, 6, () => uniformGrid(2, 3, 6)),
+  gridLayout('grid-3x2', '3×2 Raster', 6, 6, () => tileGrid(3, 2, 6)),
+  gridLayout('grid-2x3', '2×3 Raster', 6, 6, () => tileGrid(2, 3, 6)),
 
-  gridLayout('grid-row-7', '7 nebeneinander', 7, 7, () => uniformGrid(7, 1, 7)),
+  gridLayout('grid-row-7', '7 nebeneinander', 7, 7, () => tileGrid(7, 1, 7)),
   {
     id: 'grid-3-4',
     label: '3 oben, 4 unten',
@@ -174,14 +210,14 @@ export const LAYOUTS = [
     ],
   },
 
-  gridLayout('grid-4x2', '4×2 Raster', 8, 8, () => uniformGrid(4, 2, 8)),
-  gridLayout('grid-2x4', '2×4 Raster', 8, 8, () => uniformGrid(2, 4, 8)),
+  gridLayout('grid-4x2', '4×2 Raster', 8, 8, () => tileGrid(4, 2, 8)),
+  gridLayout('grid-2x4', '2×4 Raster', 8, 8, () => tileGrid(2, 4, 8)),
 
-  gridLayout('grid-3x3', '3×3 Raster', 9, 9, () => uniformGrid(3, 3, 9)),
+  gridLayout('grid-3x3', '3×3 Raster', 9, 9, () => tileGrid(3, 3, 9)),
 
-  gridLayout('grid-5x2', '5×2 Raster', 10, 10, () => uniformGrid(5, 2, 10)),
-  gridLayout('grid-2x5', '2×5 Raster', 10, 10, () => uniformGrid(2, 5, 10)),
-  gridLayout('grid-row-10', '10 nebeneinander', 10, 10, () => uniformGrid(10, 1, 10)),
+  gridLayout('grid-5x2', '5×2 Raster', 10, 10, () => tileGrid(5, 2, 10)),
+  gridLayout('grid-2x5', '2×5 Raster', 10, 10, () => tileGrid(2, 5, 10)),
+  gridLayout('grid-row-10', '10 nebeneinander', 10, 10, () => tileGrid(10, 1, 10)),
 ];
 
 /**

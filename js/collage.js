@@ -57,6 +57,40 @@ export function drawCoverWithTransform(img, x, y, w, h, ctx, transform = { panX:
  * @param {number} gap
  * @param {number} previewMax
  */
+/**
+ * @param {{ slotIndex: number, imageIndex: number, x: number, y: number, w: number, h: number }[]} cells
+ * @param {number} canvasW
+ * @param {number} canvasH
+ */
+function snapCellsToCanvasEdges(cells, canvasW, canvasH) {
+  if (!cells.length) return cells;
+
+  const rows = new Map();
+  cells.forEach((cell) => {
+    const key = Math.round(cell.y);
+    if (!rows.has(key)) rows.set(key, []);
+    rows.get(key).push(cell);
+  });
+
+  rows.forEach((rowCells) => {
+    const rightmost = rowCells.reduce((a, b) =>
+      a.x + a.w >= b.x + b.w ? a : b
+    );
+    rightmost.w = canvasW - rightmost.x;
+  });
+
+  const bottommost = cells.reduce((a, b) =>
+    a.y + a.h >= b.y + b.h ? a : b
+  );
+  cells.forEach((cell) => {
+    if (Math.abs(cell.y - bottommost.y) < 2) {
+      cell.h = canvasH - cell.y;
+    }
+  });
+
+  return cells;
+}
+
 function geometryForTarget(layoutCells, target, gap, previewMax) {
   const longSide = Math.max(target.width, target.height);
   const previewScale = Math.min(1, previewMax / longSide);
@@ -64,11 +98,16 @@ function geometryForTarget(layoutCells, target, gap, previewMax) {
   const canvasH = Math.round(target.height * previewScale);
   const gapPx = gap * previewScale;
 
-  const cells = layoutCells.map((cell, slotIndex) => {
-    const insetL = cell.x > 0 ? gapPx / 2 : 0;
-    const insetT = cell.y > 0 ? gapPx / 2 : 0;
-    const insetR = cell.x + cell.w < 1 ? gapPx / 2 : 0;
-    const insetB = cell.y + cell.h < 1 ? gapPx / 2 : 0;
+  let cells = layoutCells.map((cell, slotIndex) => {
+    const atLeft = cell.x <= 0.001;
+    const atTop = cell.y <= 0.001;
+    const atRight = cell.x + cell.w >= 0.999;
+    const atBottom = cell.y + cell.h >= 0.999;
+
+    const insetL = atLeft ? 0 : gapPx / 2;
+    const insetT = atTop ? 0 : gapPx / 2;
+    const insetR = atRight ? 0 : gapPx / 2;
+    const insetB = atBottom ? 0 : gapPx / 2;
 
     return {
       slotIndex,
@@ -79,6 +118,8 @@ function geometryForTarget(layoutCells, target, gap, previewMax) {
       h: Math.max(1, Math.round(cell.h * canvasH - insetT - insetB)),
     };
   });
+
+  cells = snapCellsToCanvasEdges(cells, canvasW, canvasH);
 
   return { width: canvasW, height: canvasH, cells };
 }
@@ -102,8 +143,8 @@ function geometryFree(images, layoutCells, gap, previewMax) {
     unit = Math.max(unit, ref.w / cell.w, ref.h / cell.h);
   });
 
-  const contentW = Math.max(...layoutCells.map((c) => (c.x + c.w) * unit)) + gap;
-  const contentH = Math.max(...layoutCells.map((c) => (c.y + c.h) * unit)) + gap;
+  const contentW = unit + gap;
+  const contentH = unit + gap;
   const scale = Math.min(1, previewMax / Math.max(contentW, contentH));
   const canvasW = Math.round(contentW * scale);
   const canvasH = Math.round(contentH * scale);
